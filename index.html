@@ -122,6 +122,26 @@ th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white
 th{font-size:.75rem;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:500}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 tr:last-child td{border-bottom:0}
+
+textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-height:150px;resize:vertical;width:100%}
+textarea:focus{outline:2px solid var(--accent);border-color:transparent}
+code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+.loadprev{display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--line);padding-top:14px}
+.preview{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;max-height:520px;overflow:auto}
+.pv{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,1.4fr);gap:10px;align-items:start;padding:9px 10px;border-bottom:1px solid var(--line)}
+.pv:last-child{border-bottom:0}
+.pv>input[type=checkbox]{margin-top:10px;width:18px;height:18px}
+.pv input[type=text]{width:100%;padding:7px 9px;font-size:.92rem;border-radius:8px}
+.pv-en input{font-family:var(--f-word);font-weight:700}
+.pv-en,.pv-ru{display:flex;flex-direction:column;gap:4px;min-width:0}
+.pv-tags{display:flex;gap:4px;flex-wrap:wrap}
+.pv-ex{font-size:.78rem;color:var(--muted);overflow-wrap:anywhere}
+.tag{font-size:.68rem;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.tag.phrase{border-color:var(--accent);color:var(--accent)}
+.tag.dup{border-color:var(--warn);color:var(--warn)}
+@media (max-width:520px){.pv{grid-template-columns:auto minmax(0,1fr)}.pv-ru{grid-column:2}}
 .empty{color:var(--muted);text-align:center;padding:18px 0;margin:0}
 @media (max-width:460px){.sum{grid-template-columns:repeat(2,minmax(0,1fr))}.menu .who{margin-left:0;width:100%;padding:4px 8px}}
 @media (prefers-reduced-motion:no-preference){
@@ -146,6 +166,7 @@ tr:last-child td{border-bottom:0}
     <button class="tab" id="tab-train" type="button" aria-current="true">Тренировка</button>
     <button class="tab" id="tab-stats" type="button" aria-current="false">Усваиваемость</button>
     <button class="tab" id="tab-lessons" type="button" aria-current="false">Занятия</button>
+    <button class="tab" id="tab-load" type="button" aria-current="false">Загрузка</button>
     <span class="who"><b id="whoName"></b><button class="linkish" id="logout" type="button">Выйти</button></span>
   </nav>
   <div class="practice" id="practiceBar" role="status" hidden><span><b>Режим без статистики.</b> Ответы не меняют рейтинг слов и не записываются в занятия. Чтобы выйти, нажмите N дважды.</span><button class="linkish" id="practiceOff" type="button">Выйти из режима</button></div>
@@ -159,11 +180,12 @@ tr:last-child td{border-bottom:0}
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 7</p>
+    <p class="intro" style="font-size:.75rem">версия 8</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
   <main class="panel" id="view-lessons" hidden></main>
+  <main class="panel" id="view-load" hidden></main>
 </div>
 
 <script>
@@ -442,7 +464,8 @@ function makeFirebase(cfg){
     watch(key,fn){off&&off();const r=db.ref(ROOT+key);const cb=s=>fn(s.val()||{});r.on('value',cb);off=()=>r.off('value',cb)},
     unwatch(){off&&off();off=null},
     save(key,k,w){return db.ref(ROOT+key+'/words/'+k).set(w)},
-    saveSession(key,id,s){return db.ref(ROOT+key+'/sessions/'+id).set(s)}
+    saveSession(key,id,s){return db.ref(ROOT+key+'/sessions/'+id).set(s)},
+    addWords(key,map){return db.ref(ROOT+key+'/words').update(map)}
   };
 }
 /* same-browser backend for testing: add #local to the address */
@@ -458,7 +481,8 @@ function makeLocal(){
     watch(key,f){me=key;fn=f;emit()},
     unwatch(){fn=null;me=null},
     async save(key,k,w){setAt(key,'words',k,w)},
-    async saveSession(key,id,s){setAt(key,'sessions',id,s)}
+    async saveSession(key,id,s){setAt(key,'sessions',id,s)},
+    async addWords(key,map){for(const k in map)setAt(key,'words',k,map[k])}
   };
 }
 const loadScript=src=>new Promise((ok,no)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=no;document.head.appendChild(s)});
@@ -522,17 +546,19 @@ function enter(){
 }
 $('logout').onclick=()=>{
   stopRec();hush();clearTimeout(speakTimer);B&&B.unwatch();me=null;words=[];sessions=[];cur=null;phase='start';
-  ['menu','lamp','bar','view-train','view-stats','view-lessons'].forEach(id=>$(id).hidden=true);$('view-login').hidden=false;$('lcode').focus();
+  $('view-load').innerHTML='';loadItems=[];
+  ['menu','lamp','bar','view-train','view-stats','view-lessons','view-load'].forEach(id=>$(id).hidden=true);$('view-login').hidden=false;$('lcode').focus();
 };
 
 /* ---------- Menu ---------- */
 let view='train';
-const VIEWS=['train','stats','lessons'];
+const VIEWS=['train','stats','lessons','load'];
 function show(v){
   view=v; VIEWS.forEach(n=>{$('view-'+n).hidden=n!==v;$('tab-'+n).setAttribute('aria-current',n===v)});
   if(v!=='train'){stopRec();hush()}
   if(v==='stats') renderStats();
   else if(v==='lessons') renderLessons();
+  else if(v==='load') renderLoad();
   else if(!(phase==='ask'||phase==='result')) renderStart();
 }
 VIEWS.forEach(n=>$('tab-'+n).onclick=()=>show(n));
@@ -629,6 +655,332 @@ function logAnswer(ok){
   }
   sess.n++; if(ok) sess.ok++; sess.end=now;
   const {id,...data}=sess; B.saveSession(me,id,data).catch(()=>{});
+}
+
+
+/* ---------- Загрузка: words from pasted text, text files, photos (OCR) and ZIP archives ---------- */
+const PHRASES_SRC = `a lot of|много
+lots of|много
+a lot|много
+a little|немного
+a few|несколько
+as well as|а также
+as well|тоже, также
+in front of|перед, впереди
+next to|рядом с
+because of|из-за
+instead of|вместо
+at least|по крайней мере
+at last|наконец
+at all|вообще, совсем
+at once|сразу
+of course|конечно
+each other|друг друга
+look for|искать
+look at|смотреть на
+look after|присматривать, заботиться
+look forward to|с нетерпением ждать
+give up|сдаваться; бросать
+get up|вставать
+wake up|просыпаться
+come back|возвращаться
+go out|выходить; гулять
+find out|выяснять, узнавать
+pick up|поднимать; забирать
+put on|надевать
+take off|снимать; взлетать
+turn on|включать
+turn off|выключать
+have to|должен, приходится
+used to|раньше (делал), бывало
+going to|собираться
+would like|хотел бы
+how much|сколько
+how many|сколько
+what time|который час; во сколько
+so that|чтобы
+such as|такой как, например
+according to|согласно, по словам
+in order to|для того чтобы
+right now|прямо сейчас
+for example|например
+by the way|кстати
+on time|вовремя
+in time|вовремя, своевременно
+all right|в порядке, хорошо
+thank you|спасибо
+see you|увидимся
+out of|из, вне
+kind of|вроде, своего рода
+as soon as|как только
+as long as|пока; при условии что
+even though|хотя
+even if|даже если
+take care|береги себя; заботиться
+make sure|убедиться
+pay attention|обращать внимание
+take part|участвовать
+by heart|наизусть
+at home|дома
+go to bed|ложиться спать
+on the other hand|с другой стороны
+in fact|на самом деле
+at the same time|в то же время
+get on|садиться (в транспорт); ладить
+get off|выходить (из транспорта)
+a long time|долго
+every day|каждый день
+right away|сразу же`;
+const PHRASES={};PHRASES_SRC.split('\n').forEach(l=>{const[a,b]=l.split('|');PHRASES[a.trim()]=b.split(';').map(x=>x.trim()).filter(Boolean)});
+const PHRASE_LIST=Object.keys(PHRASES).map(p=>p.split(' ')).sort((a,b)=>b.length-a.length);
+const BASE_DICT={};BASE.split('\n').forEach(l=>{const[en,ru]=l.split('|');if(en&&ru)BASE_DICT[en.trim().toLowerCase()]=ru.split(';').map(x=>x.trim()).filter(Boolean)});
+const IRREG=Object.fromEntries(`went:go gone:go was:be were:be been:be is:be am:be are:be had:have has:have did:do done:do does:do made:make took:take taken:take saw:see seen:see came:come gave:give given:give got:get gotten:get knew:know known:know thought:think told:tell said:say found:find felt:feel left:leave brought:bring began:begin begun:begin kept:keep held:hold wrote:write written:write stood:stand heard:hear meant:mean met:meet ran:run paid:pay sat:sit spoke:speak spoken:speak led:lead grew:grow grown:grow lost:lose fell:fall fallen:fall sent:send built:build understood:understand drew:draw drawn:draw broke:break broken:break spent:spend rose:rise risen:rise drove:drive driven:drive bought:buy wore:wear worn:wear chose:choose chosen:choose threw:throw thrown:throw caught:catch won:win forgot:forget forgotten:forget ate:eat eaten:eat drank:drink drunk:drink sang:sing sung:sing swam:swim swum:swim slept:sleep taught:teach fought:fight flew:fly flown:fly hid:hide hidden:hide rode:ride ridden:ride sold:sell shot:shoot shook:shake shaken:shake stole:steal stolen:steal woke:wake woken:wake became:become men:man women:woman feet:foot teeth:tooth mice:mouse geese:goose`.split(' ').map(p=>p.split(':')));
+const SKIPW=new Set(['a','an','the']);
+function lemma(t){
+  if(IRREG[t]) return IRREG[t];
+  if(BASE_DICT[t]||t.length<4) return t;
+  if(/ies$/.test(t)&&t.length>4) return t.slice(0,-3)+'y';
+  if(/(ss|us|is|ous)$/.test(t)) return t;
+  if(/(s|x|z|ch|sh)es$/.test(t)) return t.slice(0,-2);
+  if(/[^s]s$/.test(t)) return t.slice(0,-1);
+  return t;
+}
+const CYR=/[А-Яа-яЁё]/;
+function splitTop(s){const out=[];let d=0,b='';for(const ch of s){if(ch==='(')d++;if(ch===')')d=Math.max(0,d-1);if(d===0&&/[,;]/.test(ch)){out.push(b);b=''}else b+=ch}out.push(b);return out.map(x=>x.trim()).filter(Boolean)}
+const meaningsOf=s=>s.replace(/[()]/g,'').split(/[,;]/).map(x=>x.trim().replace(/\s+/g,' ')).filter(x=>x&&CYR.test(x));
+function parseInput(text){
+  const items=[], prose=[];
+  const add=(en,ru,how,ex)=>{en=en.toLowerCase().replace(/[^a-z' -]/g,' ').replace(/\s+/g,' ').trim().replace(/^'+|'+$/g,'');if(en)items.push({en,ru:ru||[],how,ex})};
+  for(let line of text.replace(/\r/g,'').split('\n')){
+    line=line.trim(); if(!/[A-Za-z]/.test(line)) continue;
+    // "word — перевод", "word - перевод", "word: перевод", "word<TAB>перевод"
+    const pair=line.match(/^([A-Za-z][A-Za-z' ,.-]*?)\s*(?:\t|\s[—–-]\s|—|–|=|:)\s*(.*[А-Яа-яЁё].*)$/);
+    if(pair&&!/[.!?]\s+[A-Z]/.test(pair[1])){ add(pair[1].replace(/\(.*?\)/g,''),meaningsOf(pair[2]),'given'); continue; }
+    const words=line.replace(/\([^)]*\)/g,'').split(/\s+/).filter(w=>/[A-Za-z]/.test(w));
+    const listy=/[,;]/.test(line)?splitTop(line).every(it=>it.replace(/\([^)]*\)/g,'').trim().split(/\s+/).length<=4):words.length<=3;
+    if(listy&&!/[.!?]["»”']?$/.test(line)){
+      for(const it of splitTop(line)){
+        const m=it.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
+        if(m&&CYR.test(m[2])) add(m[1],meaningsOf(m[2]),'fixed'); else add(it.replace(/\([^)]*\)/g,''),[],'list');
+      }
+    } else prose.push(line);
+  }
+  // running text: set phrases first, then single words in base form; remember the sentence as an example
+  const body=prose.join(' ');
+  if(body){
+    const fixedHere=[];
+    const clean=body.replace(/([A-Za-z][A-Za-z']*)\s*\(([^)]*[А-Яа-яЁё][^)]*)\)/g,(all,w,ru)=>{fixedHere.push([w,ru]);return w});
+    fixedHere.forEach(([w,ru])=>add(lemma(w.toLowerCase()),meaningsOf(ru),'fixed'));
+    const sentences=clean.match(/[^.!?]+[.!?]*/g)||[clean];
+    for(const sen of sentences){
+      const raw=sen.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g)||[]; const toks=raw.map(t=>t.toLowerCase());
+      const ex=sen.trim().replace(/\s+/g,' ');
+      for(let i=0;i<toks.length;){
+        const hit=PHRASE_LIST.find(p=>p.every((w,k)=>toks[i+k]===w));
+        if(hit){add(hit.join(' '),[],'text',ex);i+=hit.length;continue}
+        let t=toks[i]; const orig=raw[i]; i++;
+        if(t.includes("'")){ if(/'s$/.test(t)) t=t.slice(0,-2); else continue; }
+        if(SKIPW.has(t)||(t.length<2&&t!=='i')) continue;
+        const name=/^[A-Z]/.test(orig)&&i>1&&!/^I$/.test(orig);   // capitalised mid-sentence: probably a name
+        add(lemma(t),[],name?'name':'text',ex);
+      }
+    }
+  }
+  // merge duplicates: given / fixed meanings win, keep the first example
+  const map=new Map();
+  for(const it of items){
+    const k=wordKey(it.en), was=map.get(k);
+    if(!was){map.set(k,{...it,k});continue}
+    if((it.how==='given'||it.how==='fixed')&&!(was.how==='given'||was.how==='fixed')){was.ru=it.ru;was.how=it.how}
+    if(was.how==='name'&&it.how!=='name') was.how=it.how;
+    if(!was.ex&&it.ex) was.ex=it.ex;
+  }
+  return [...map.values()];
+}
+
+/* online translation (no key needed); every result can be corrected by hand before adding */
+async function translateWord(q){
+  try{
+    const r=await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&dt=bd&q='+encodeURIComponent(q));
+    if(r.ok){const d=await r.json();const out=[];
+      if(Array.isArray(d[1])) for(const pos of d[1]) for(const t of (pos[1]||[]).slice(0,3)) if(out.length<5&&!out.includes(t)) out.push(t);
+      if(!out.length&&d[0]) out.push(d[0].map(x=>x[0]).join('').trim());
+      if(out.length&&out[0]) return out;}
+  }catch(e){}
+  try{
+    const r=await fetch('https://api.mymemory.translated.net/get?langpair=en|ru&q='+encodeURIComponent(q));
+    if(r.ok){const d=await r.json();const t=d&&d.responseData&&d.responseData.translatedText;if(t&&CYR.test(t))return [t.trim()]}
+  }catch(e){}
+  return null;
+}
+async function translateSentence(q){
+  try{const r=await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q='+encodeURIComponent(q));
+    if(r.ok){const d=await r.json();const t=(d[0]||[]).map(x=>x[0]).join('').trim();if(t)return t}}catch(e){}
+  return '';
+}
+async function pool(list,n,fn){let i=0;await Promise.all(Array.from({length:n},async()=>{while(i<list.length){const x=list[i++];await fn(x)}}))}
+
+/* reading files */
+const libs={};
+function lib(name,src,global){return libs[name]||(libs[name]=loadScript(src).then(()=>window[global]))}
+const getZip=()=>lib('zip','https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js','JSZip');
+const getXlsx=()=>lib('xlsx','https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js','XLSX');
+const getTess=()=>lib('tess','https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js','Tesseract');
+let ocrWorker=null;
+async function ocr(blob,label){
+  const T=await getTess();
+  if(!ocrWorker){loadStatus('Загружаю распознавание текста (первый раз около 10–20 секунд)…');ocrWorker=await T.createWorker(['eng','rus'])}
+  loadStatus(label);
+  const {data}=await ocrWorker.recognize(blob);
+  return (data&&data.text||'').trim();
+}
+const IMG=/\.(jpe?g|png)$/i, TXT=/\.(txt|csv|text)$/i, XLS=/\.xlsx?$/i, ZIP=/\.zip$/i;
+async function readXlsx(buf){
+  const X=await getXlsx(); const wb=X.read(buf,{type:'array'}); const out=[];
+  for(const n of wb.SheetNames) for(const r of X.utils.sheet_to_json(wb.Sheets[n],{header:1})){
+    const en=String(r[0]??'').trim(), ru=String(r[1]??'').trim(); if(en) out.push(ru?en+' — '+ru:en);
+  }
+  return out.join('\n');
+}
+async function readFiles(files){
+  const parts=[]; let nImg=0, done=0;
+  const queue=[];
+  for(const f of files){
+    if(ZIP.test(f.name)){
+      loadStatus('Открываю архив '+f.name+'…');
+      const Z=await getZip(); const z=await Z.loadAsync(f);
+      Object.values(z.files).filter(e=>!e.dir&&!/(^|\/)(__MACOSX|\.)/.test(e.name)).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}))
+        .forEach(e=>queue.push({name:e.name,get:t=>e.async(t)}));
+    } else queue.push({name:f.name,get:t=>t==='blob'?Promise.resolve(f):t==='arraybuffer'?f.arrayBuffer():f.text()});
+  }
+  nImg=queue.filter(q=>IMG.test(q.name)).length;
+  const skipped=[];
+  for(const q of queue){
+    if(IMG.test(q.name)){done++;parts.push(await ocr(await q.get('blob'),`Распознаю текст на картинке ${done} из ${nImg}: ${q.name}`))}
+    else if(TXT.test(q.name)) parts.push(await q.get('string').catch(()=>q.get('text')));
+    else if(XLS.test(q.name)) parts.push(await readXlsx(await q.get('arraybuffer')));
+    else skipped.push(q.name);
+  }
+  return {text:parts.filter(Boolean).join('\n\n'),skipped,nImg};
+}
+
+/* the Загрузка view */
+let loadItems=[], loadBusy=false;
+function loadStatus(t,err){const s=$('loadBusy');if(s){s.hidden=!t;s.textContent=t||'';s.classList.toggle('err',!!err)}}
+function renderLoad(){
+  if($('loadText')) return;   // keep what is already typed
+  $('view-load').innerHTML=`<h2>Загрузка слов</h2>
+    <p class="hint">Вставьте слова через запятую, по одному в строке или целый английский текст. Перевод можно указать сразу: <code>bank (берег)</code> или <code>apple — яблоко</code>. Устойчивые выражения вроде <code>a lot of</code> или <code>look for</code> находятся в тексте сами. Слова, которые уже есть в словаре, не дублируются.</p>
+    <p class="hint">Файлы: текст (.txt, .csv), таблица Excel (.xlsx: английское слово в первом столбце, перевод во втором), фотографии (.jpg, .png) — текст с них распознаётся, архив .zip с фотографиями или текстами.</p>
+    <textarea id="loadText" placeholder="apple, bank (берег), a lot of&#10;to borrow — брать взаймы&#10;&#10;или текст: We often look for new places to visit."></textarea>
+    <div class="row">
+      <button class="btn" id="loadParse" type="button">Разобрать</button>
+      <label class="btn plain" for="loadFiles" style="cursor:pointer">Выбрать файлы</label>
+      <input id="loadFiles" type="file" multiple accept=".txt,.csv,.xlsx,.xls,.jpg,.jpeg,.png,.zip,image/jpeg,image/png,application/zip" hidden>
+    </div>
+    <p class="status" id="loadBusy" hidden></p>
+    <div id="loadPreview" class="loadprev" hidden></div>`;
+  $('loadParse').onclick=()=>startParse($('loadText').value);
+  $('loadFiles').onchange=async e=>{
+    const files=[...e.target.files]; e.target.value=''; if(!files.length||loadBusy) return;
+    loadBusy=true; setLoadButtons(true);
+    try{
+      const {text,skipped,nImg}=await readFiles(files);
+      if(!text.trim()){loadStatus('В файлах не нашлось текста.'+(skipped.length?' Пропущены: '+skipped.join(', '):''),true);return}
+      const t=$('loadText'); t.value=(t.value.trim()?t.value.trim()+'\n\n':'')+text;
+      loadStatus(nImg?'Текст распознан. Проверьте его в поле выше: ошибки распознавания можно исправить и нажать «Разобрать» ещё раз.':'');
+      await startParse(t.value,true);
+      if(skipped.length) loadStatus('Пропущены файлы неподходящего типа: '+skipped.join(', '));
+    }catch(err){loadStatus('Не удалось прочитать файлы: '+((err&&err.message)||err),true)}
+    finally{loadBusy=false;setLoadButtons(false)}
+  };
+}
+function setLoadButtons(dis){['loadParse','loadAdd'].forEach(id=>{const b=$(id);if(b)b.disabled=dis})}
+async function startParse(text,keepStatus){
+  if(!/[A-Za-z]/.test(text)){loadStatus('Не нашёл английских слов.',true);return}
+  const have=new Map(words.map(w=>[w.k,w]));
+  loadItems=parseInput(text).map(it=>{
+    const dup=have.has(it.k);
+    let ru=it.ru, src=it.ru.length?'given':'';
+    if(!ru.length&&PHRASES[it.en]){ru=PHRASES[it.en].slice();src='dict'}
+    if(!ru.length&&BASE_DICT[it.en]){ru=BASE_DICT[it.en].slice();src='dict'}
+    const ex=EXAMPLES[it.en]?{...EXAMPLES[it.en]}:it.ex?{en:it.ex.slice(0,140),ru:''}:null;
+    return {...it,ru,src,dup,ex,on:!dup&&it.how!=='name',state:ru.length?'':'wait'};
+  });
+  if(!keepStatus) loadStatus('');
+  renderPreview();
+  const need=loadItems.filter(i=>i.state==='wait'&&!i.dup);
+  loadItems.filter(i=>i.state==='wait'&&i.dup).forEach(i=>i.state='');
+  if(need.length){
+    loadStatus(`Перевожу новые слова: 0 из ${need.length}…`); let n=0;
+    await pool(need,4,async it=>{
+      const t=await translateWord(it.en);
+      if(t){it.ru=t;it.src='auto';it.state=''}else it.state='none';
+      if(it.ex&&!it.ex.ru) it.ex.ru=await translateSentence(it.ex.en);
+      n++; loadStatus(`Перевожу новые слова: ${n} из ${need.length}…`); updateRow(it);
+    });
+    const miss=need.filter(i=>i.state==='none').length;
+    loadStatus(miss?`Для ${miss} слов перевод не найден: впишите его сами или снимите галочку.`:'Переводы готовы. Проверьте их и нажмите «Добавить».',!!miss);
+  }
+  renderCount();
+}
+const TAGS={given:'перевод задан',fixed:'смысл задан',dict:'',auto:'автоперевод'};
+function rowHTML(it,i){
+  return `<div class="pv" id="pv-${i}">
+    <input type="checkbox" id="pv-c-${i}" ${it.on?'checked':''} aria-label="Добавить ${esc(it.en)}">
+    <div class="pv-en"><input type="text" id="pv-e-${i}" value="${esc(it.en)}" lang="en" aria-label="Английское слово">
+      <span class="pv-tags">${it.en.includes(' ')?'<span class="tag phrase">выражение</span>':''}${it.dup?'<span class="tag dup">уже в словаре</span>':''}${it.how==='name'?'<span class="tag dup">похоже на имя</span>':''}${TAGS[it.src]?`<span class="tag">${TAGS[it.src]}</span>`:''}</span></div>
+    <div class="pv-ru"><input type="text" id="pv-t-${i}" value="${esc(it.ru.join('; '))}" placeholder="${it.state==='wait'?'перевожу…':'впишите перевод'}" aria-label="Перевод">
+      ${it.ex?`<span class="pv-ex" lang="en">${esc(it.ex.en)}${it.ex.ru?' — '+esc(it.ex.ru):''}</span>`:''}</div>
+  </div>`;
+}
+function renderPreview(){
+  const box=$('loadPreview'); box.hidden=!loadItems.length;
+  if(!loadItems.length){box.innerHTML='';return}
+  box.innerHTML=`<div class="toolbar"><h2 id="pvTitle"></h2><span class="row"><button class="linkish" id="pvAll" type="button">Выбрать все новые</button><button class="linkish" id="pvNone" type="button">Снять все</button></span></div>
+    <div class="preview">${loadItems.map(rowHTML).join('')}</div>
+    <p class="hint">Перевод и само слово можно поправить. Значения разделяйте точкой с запятой.</p>
+    <div class="row"><button class="btn" id="loadAdd" type="button">Добавить</button><button class="btn plain" id="loadCancel" type="button">Отмена</button></div>`;
+  loadItems.forEach((it,i)=>bindRow(it,i));
+  $('pvAll').onclick=()=>{loadItems.forEach((it,i)=>{it.on=!it.dup;$('pv-c-'+i).checked=it.on});renderCount()};
+  $('pvNone').onclick=()=>{loadItems.forEach((it,i)=>{it.on=false;$('pv-c-'+i).checked=false});renderCount()};
+  $('loadAdd').onclick=commitLoad;
+  $('loadCancel').onclick=()=>{loadItems=[];renderPreview();loadStatus('')};
+  renderCount();
+}
+function bindRow(it,i){
+  $('pv-c-'+i).onchange=e=>{it.on=e.target.checked;renderCount()};
+  $('pv-e-'+i).oninput=e=>{it.en=e.target.value.trim().toLowerCase()};
+  $('pv-t-'+i).oninput=e=>{it.ru=e.target.value.split(';').map(x=>x.trim()).filter(Boolean);it.state=''};
+}
+function updateRow(it){
+  const i=loadItems.indexOf(it), el=$('pv-'+i); if(!el) return;
+  const typed=$('pv-t-'+i)&&$('pv-t-'+i).value; if(typed&&it.src==='auto') return;   // user already typed a translation
+  el.outerHTML=rowHTML(it,i); bindRow(it,i);
+}
+function renderCount(){
+  const t=$('pvTitle'); if(!t) return;
+  const sel=loadItems.filter(i=>i.on).length, fresh=loadItems.filter(i=>!i.dup).length;
+  t.textContent=`Найдено ${loadItems.length}, новых ${fresh}`;
+  const b=$('loadAdd'); if(b){b.textContent=`Добавить в словарь (${sel})`;b.disabled=!sel||loadBusy}
+}
+async function commitLoad(){
+  const sel=loadItems.filter(i=>i.on&&i.en);
+  const noTr=sel.filter(i=>!i.ru.length);
+  if(noTr.length){loadStatus(`У ${noTr.length} выбранных слов нет перевода (${noTr.slice(0,5).map(i=>i.en).join(', ')}${noTr.length>5?'…':''}). Впишите перевод или снимите галочку.`,true);return}
+  const have=new Map(words.map(w=>[w.k,w])), upd={}; let added=0, changed=0;
+  for(const it of sel){
+    const k=wordKey(it.en), old=have.get(k);
+    if(old){ if(it.how==='given'||it.how==='fixed'||it.src!=='dict'){const {k:_,...d}=old;upd[k]={...d,ru:it.ru};changed++} }
+    else{ upd[k]={en:it.en,ru:it.ru,r:0,seen:0,ok:0,last:0,...(it.ex&&it.ex.en&&!EXAMPLES[it.en]?{ex:{en:it.ex.en,ru:it.ex.ru||''}}:{})}; added++; }
+  }
+  if(!Object.keys(upd).length){loadStatus('Нечего добавлять: все выбранные слова уже есть в словаре.');return}
+  $('loadAdd').disabled=true; loadStatus('Сохраняю…');
+  try{
+    await B.addWords(me,upd);
+    loadItems=[]; renderPreview(); $('loadText').value='';
+    loadStatus(`Готово: добавлено ${added}${changed?`, обновлено ${changed}`:''}. Новые слова уже участвуют в тренировке.`);
+  }catch(err){loadStatus('Не удалось сохранить: '+((err&&(err.code||err.message))||err),true);$('loadAdd').disabled=false}
 }
 
 /* ---------- Picking the next word ---------- */
