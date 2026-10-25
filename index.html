@@ -142,6 +142,9 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
 .tag.phrase{border-color:var(--accent);color:var(--accent)}
 .tag.dup{border-color:var(--warn);color:var(--warn)}
 @media (max-width:520px){.pv{grid-template-columns:auto minmax(0,1fr)}.pv-ru{grid-column:2}}
+.dropped{font-size:.85rem;color:var(--muted)}
+.dropped summary{cursor:pointer;color:var(--accent)}
+.dropped p{margin:6px 0 0;overflow-wrap:anywhere}
 .empty{color:var(--muted);text-align:center;padding:18px 0;margin:0}
 @media (max-width:460px){.sum{grid-template-columns:repeat(2,minmax(0,1fr))}.menu .who{margin-left:0;width:100%;padding:4px 8px}}
 @media (prefers-reduced-motion:no-preference){
@@ -180,7 +183,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 8</p>
+    <p class="intro" style="font-size:.75rem">версия 9</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -736,8 +739,31 @@ const PHRASE_LIST=Object.keys(PHRASES).map(p=>p.split(' ')).sort((a,b)=>b.length
 const BASE_DICT={};BASE.split('\n').forEach(l=>{const[en,ru]=l.split('|');if(en&&ru)BASE_DICT[en.trim().toLowerCase()]=ru.split(';').map(x=>x.trim()).filter(Boolean)});
 const IRREG=Object.fromEntries(`went:go gone:go was:be were:be been:be is:be am:be are:be had:have has:have did:do done:do does:do made:make took:take taken:take saw:see seen:see came:come gave:give given:give got:get gotten:get knew:know known:know thought:think told:tell said:say found:find felt:feel left:leave brought:bring began:begin begun:begin kept:keep held:hold wrote:write written:write stood:stand heard:hear meant:mean met:meet ran:run paid:pay sat:sit spoke:speak spoken:speak led:lead grew:grow grown:grow lost:lose fell:fall fallen:fall sent:send built:build understood:understand drew:draw drawn:draw broke:break broken:break spent:spend rose:rise risen:rise drove:drive driven:drive bought:buy wore:wear worn:wear chose:choose chosen:choose threw:throw thrown:throw caught:catch won:win forgot:forget forgotten:forget ate:eat eaten:eat drank:drink drunk:drink sang:sing sung:sing swam:swim swum:swim slept:sleep taught:teach fought:fight flew:fly flown:fly hid:hide hidden:hide rode:ride ridden:ride sold:sell shot:shoot shook:shake shaken:shake stole:steal stolen:steal woke:wake woken:wake became:become men:man women:woman feet:foot teeth:tooth mice:mouse geese:goose`.split(' ').map(p=>p.split(':')));
 const SKIPW=new Set(['a','an','the']);
+/* Common English base words (about 10 000, from Google's frequency list checked against a dictionary).
+   Words from running text or photos are kept only if their base form is on this list: this drops names,
+   abbreviations, rare terms and OCR garbage. Typed word lists are not filtered. */
+let COMMON=null;
+async function getCommon(){
+  if(COMMON) return COMMON;
+  try{const r=await fetch('words-common.txt');if(r.ok){COMMON=new Set((await r.text()).split(/\s+/).filter(Boolean));Object.keys(BASE_DICT).forEach(w=>COMMON.add(w))}}catch(e){}
+  return COMMON;
+}
+function lemmaCands(t){
+  const c=[];
+  if(/ies$/.test(t)&&t.length>4) c.push(t.slice(0,-3)+'y');
+  if(/ied$/.test(t)&&t.length>4) c.push(t.slice(0,-3)+'y');
+  if(/es$/.test(t)) c.push(t.slice(0,-2));
+  if(/s$/.test(t)) c.push(t.slice(0,-1));
+  if(/ed$/.test(t)){c.push(t.slice(0,-2),t.slice(0,-1));if(t.length>4&&t[t.length-3]===t[t.length-4])c.push(t.slice(0,-3))}
+  if(/ing$/.test(t)){c.push(t.slice(0,-3),t.slice(0,-3)+'e');if(t.length>5&&t[t.length-4]===t[t.length-5])c.push(t.slice(0,-4))}
+  if(/er$/.test(t)){c.push(t.slice(0,-2),t.slice(0,-1));if(t.length>4&&t[t.length-3]===t[t.length-4])c.push(t.slice(0,-3));if(/ier$/.test(t))c.push(t.slice(0,-3)+'y')}
+  if(/est$/.test(t)){c.push(t.slice(0,-3),t.slice(0,-2));if(t.length>5&&t[t.length-4]===t[t.length-5])c.push(t.slice(0,-4));if(/iest$/.test(t))c.push(t.slice(0,-4)+'y')}
+  return c;
+}
+/* base form of a word from running text; null when it is not a common word */
 function lemma(t){
   if(IRREG[t]) return IRREG[t];
+  if(COMMON){ if(COMMON.has(t)) return t; for(const c of lemmaCands(t)) if(COMMON.has(c)) return c; return null; }
   if(BASE_DICT[t]||t.length<4) return t;
   if(/ies$/.test(t)&&t.length>4) return t.slice(0,-3)+'y';
   if(/(ss|us|is|ous)$/.test(t)) return t;
@@ -749,9 +775,9 @@ const CYR=/[А-Яа-яЁё]/;
 function splitTop(s){const out=[];let d=0,b='';for(const ch of s){if(ch==='(')d++;if(ch===')')d=Math.max(0,d-1);if(d===0&&/[,;]/.test(ch)){out.push(b);b=''}else b+=ch}out.push(b);return out.map(x=>x.trim()).filter(Boolean)}
 const meaningsOf=s=>s.replace(/[()]/g,'').split(/[,;]/).map(x=>x.trim().replace(/\s+/g,' ')).filter(x=>x&&CYR.test(x));
 function parseInput(text){
-  const items=[], prose=[];
+  const items=[], prose=[], dropped=new Set();
   const add=(en,ru,how,ex)=>{en=en.toLowerCase().replace(/[^a-z' -]/g,' ').replace(/\s+/g,' ').trim().replace(/^'+|'+$/g,'');if(en)items.push({en,ru:ru||[],how,ex})};
-  for(let line of text.replace(/\r/g,'').split('\n')){
+  for(let line of text.replace(/\r/g,'').replace(/[’‘`´]/g,"'").split('\n')){
     line=line.trim(); if(!/[A-Za-z]/.test(line)) continue;
     // "word — перевод", "word - перевод", "word: перевод", "word<TAB>перевод"
     const pair=line.match(/^([A-Za-z][A-Za-z' ,.-]*?)\s*(?:\t|\s[—–-]\s|—|–|=|:)\s*(.*[А-Яа-яЁё].*)$/);
@@ -761,7 +787,15 @@ function parseInput(text){
     if(listy&&!/[.!?]["»”']?$/.test(line)){
       for(const it of splitTop(line)){
         const m=it.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
-        if(m&&CYR.test(m[2])) add(m[1],meaningsOf(m[2]),'fixed'); else add(it.replace(/\([^)]*\)/g,''),[],'list');
+        if(m&&CYR.test(m[2])){ add(m[1],meaningsOf(m[2]),'fixed'); continue; }
+        const en=it.replace(/\([^)]*\)/g,'').toLowerCase().replace(/[^a-z' -]/g,' ').replace(/\s+/g,' ').trim(); if(!en) continue;
+        if(!COMMON){ add(en,[],'list'); continue; }
+        // without a translation, a list item must be a common word or a known expression; anything else goes through the text filter
+        const ws=en.split(' ');
+        if(PHRASES[en]) add(en,[],'list');
+        else if(ws.length===1){ const l=lemma(ws[0]); if(l) add(l,[],'list'); else dropped.add(ws[0]); }
+        else if(ws.length===2&&ws.every(w=>COMMON.has(w)||lemma(w))&&!ws.some(w=>w.length<2)) add(en,[],'list');
+        else prose.push(it+'.');
       }
     } else prose.push(line);
   }
@@ -770,7 +804,7 @@ function parseInput(text){
   if(body){
     const fixedHere=[];
     const clean=body.replace(/([A-Za-z][A-Za-z']*)\s*\(([^)]*[А-Яа-яЁё][^)]*)\)/g,(all,w,ru)=>{fixedHere.push([w,ru]);return w});
-    fixedHere.forEach(([w,ru])=>add(lemma(w.toLowerCase()),meaningsOf(ru),'fixed'));
+    fixedHere.forEach(([w,ru])=>add(lemma(w.toLowerCase())||w.toLowerCase(),meaningsOf(ru),'fixed'));
     const sentences=clean.match(/[^.!?]+[.!?]*/g)||[clean];
     for(const sen of sentences){
       const raw=sen.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g)||[]; const toks=raw.map(t=>t.toLowerCase());
@@ -782,7 +816,8 @@ function parseInput(text){
         if(t.includes("'")){ if(/'s$/.test(t)) t=t.slice(0,-2); else continue; }
         if(SKIPW.has(t)||(t.length<2&&t!=='i')) continue;
         const name=/^[A-Z]/.test(orig)&&i>1&&!/^I$/.test(orig);   // capitalised mid-sentence: probably a name
-        add(lemma(t),[],name?'name':'text',ex);
+        const l=lemma(t); if(!l){dropped.add(t);continue}
+        add(l,[],name?'name':'text',ex);
       }
     }
   }
@@ -795,7 +830,7 @@ function parseInput(text){
     if(was.how==='name'&&it.how!=='name') was.how=it.how;
     if(!was.ex&&it.ex) was.ex=it.ex;
   }
-  return [...map.values()];
+  const out=[...map.values()]; out.dropped=[...dropped].filter(t=>!map.has(wordKey(t))); return out;
 }
 
 /* online translation (no key needed); every result can be corrected by hand before adding */
@@ -803,9 +838,18 @@ async function translateWord(q){
   try{
     const r=await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&dt=bd&q='+encodeURIComponent(q));
     if(r.ok){const d=await r.json();const out=[];
-      if(Array.isArray(d[1])) for(const pos of d[1]) for(const t of (pos[1]||[]).slice(0,3)) if(out.length<5&&!out.includes(t)) out.push(t);
-      if(!out.length&&d[0]) out.push(d[0].map(x=>x[0]).join('').trim());
-      if(out.length&&out[0]) return out;}
+      const main=d&&d[0]?d[0].map(x=>x&&x[0]||'').join('').trim().toLowerCase():'';
+      if(main&&CYR.test(main)) out.push(main);
+      // dictionary meanings come with a frequency score: keep only the common ones of the first two parts of speech
+      if(Array.isArray(d[1])) for(const pos of d[1].slice(0,2)){
+        const ents=Array.isArray(pos[2])?pos[2]:(pos[1]||[]).map(t=>[t,null,null,1]);
+        const top=ents.length?(ents[0][3]||0):0;
+        for(const e of ents.slice(0,3)){
+          const t=String(e[0]||'').toLowerCase(), sc=e[3]||0;
+          if(t&&CYR.test(t)&&!out.includes(t)&&out.length<4&&(e===ents[0]||sc>=Math.max(.01,top*.15))) out.push(t);
+        }
+      }
+      if(out.length) return out;}
   }catch(e){}
   try{
     const r=await fetch('https://api.mymemory.translated.net/get?langpair=en|ru&q='+encodeURIComponent(q));
@@ -827,12 +871,41 @@ const getZip=()=>lib('zip','https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/
 const getXlsx=()=>lib('xlsx','https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js','XLSX');
 const getTess=()=>lib('tess','https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js','Tesseract');
 let ocrWorker=null;
+function drawRotated(bmp,deg,maxSide){
+  const k=Math.min(1,maxSide/Math.max(bmp.width,bmp.height)), w=Math.round(bmp.width*k), h=Math.round(bmp.height*k);
+  const c=document.createElement('canvas'), side=deg%180!==0;
+  c.width=side?h:w; c.height=side?w:h;
+  const g=c.getContext('2d'); g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height);
+  g.translate(c.width/2,c.height/2); g.rotate(deg*Math.PI/180); g.drawImage(bmp,-w/2,-h/2,w,h);
+  return c;
+}
+/* text of the confidently read words only, line by line (shaky guesses are usually OCR garbage) */
+function ocrText(data){
+  if(data&&Array.isArray(data.lines)&&data.lines.length)
+    return data.lines.map(l=>(l.words||[]).filter(w=>w.confidence>=55).map(w=>w.text).join(' ')).filter(Boolean).join('\n');
+  return data&&data.text||'';
+}
+const goodWords=data=>(data&&data.words||[]).filter(w=>w.confidence>=70&&(w.text.match(/[A-Za-zА-Яа-яЁё]/g)||[]).length>=3).length;
 async function ocr(blob,label){
   const T=await getTess();
   if(!ocrWorker){loadStatus('Загружаю распознавание текста (первый раз около 10–20 секунд)…');ocrWorker=await T.createWorker(['eng','rus'])}
-  loadStatus(label);
-  const {data}=await ocrWorker.recognize(blob);
-  return (data&&data.text||'').trim();
+  const bmp=await createImageBitmap(blob);
+  // photos of a book are often taken sideways: try the four turns on a small copy and keep the one that reads best
+  loadStatus(label+' — определяю, как повёрнута страница…');
+  await ocrWorker.setParameters({tessedit_pageseg_mode:'11'});
+  let best=0, bestScore=-1;
+  for(const deg of [0,90,270,180]){
+    const {data}=await ocrWorker.recognize(drawRotated(bmp,deg,1000));
+    const sc=goodWords(data); if(sc>bestScore){bestScore=sc;best=deg}
+  }
+  const full=drawRotated(bmp,best,2000);
+  loadStatus(label+' — читаю текст…');
+  await ocrWorker.setParameters({tessedit_pageseg_mode:'3'});         // as a page: keeps lines like "apple — яблоко"
+  const a=ocrText((await ocrWorker.recognize(full)).data);
+  await ocrWorker.setParameters({tessedit_pageseg_mode:'11'});        // as scattered text: finds speech bubbles and captions
+  const b=ocrText((await ocrWorker.recognize(full)).data);
+  bmp.close&&bmp.close();
+  return (a+'\n\n'+b).trim();
 }
 const IMG=/\.(jpe?g|png)$/i, TXT=/\.(txt|csv|text)$/i, XLS=/\.xlsx?$/i, ZIP=/\.zip$/i;
 async function readXlsx(buf){
@@ -856,7 +929,9 @@ async function readFiles(files){
   nImg=queue.filter(q=>IMG.test(q.name)).length;
   const skipped=[];
   for(const q of queue){
-    if(IMG.test(q.name)){done++;parts.push(await ocr(await q.get('blob'),`Распознаю текст на картинке ${done} из ${nImg}: ${q.name}`))}
+    if(IMG.test(q.name)){done++;
+      try{parts.push(await ocr(await q.get('blob'),`Картинка ${done} из ${nImg}`))}
+      catch(err){skipped.push(q.name+' (не удалось открыть картинку)')}}
     else if(TXT.test(q.name)) parts.push(await q.get('string').catch(()=>q.get('text')));
     else if(XLS.test(q.name)) parts.push(await readXlsx(await q.get('arraybuffer')));
     else skipped.push(q.name);
@@ -865,7 +940,7 @@ async function readFiles(files){
 }
 
 /* the Загрузка view */
-let loadItems=[], loadBusy=false;
+let loadItems=[], loadBusy=false, loadDropped=[];
 function loadStatus(t,err){const s=$('loadBusy');if(s){s.hidden=!t;s.textContent=t||'';s.classList.toggle('err',!!err)}}
 function renderLoad(){
   if($('loadText')) return;   // keep what is already typed
@@ -890,7 +965,7 @@ function renderLoad(){
       const t=$('loadText'); t.value=(t.value.trim()?t.value.trim()+'\n\n':'')+text;
       loadStatus(nImg?'Текст распознан. Проверьте его в поле выше: ошибки распознавания можно исправить и нажать «Разобрать» ещё раз.':'');
       await startParse(t.value,true);
-      if(skipped.length) loadStatus('Пропущены файлы неподходящего типа: '+skipped.join(', '));
+      if(skipped.length) loadStatus('Пропущены файлы: '+skipped.join(', '));
     }catch(err){loadStatus('Не удалось прочитать файлы: '+((err&&err.message)||err),true)}
     finally{loadBusy=false;setLoadButtons(false)}
   };
@@ -898,8 +973,10 @@ function renderLoad(){
 function setLoadButtons(dis){['loadParse','loadAdd'].forEach(id=>{const b=$(id);if(b)b.disabled=dis})}
 async function startParse(text,keepStatus){
   if(!/[A-Za-z]/.test(text)){loadStatus('Не нашёл английских слов.',true);return}
+  await getCommon();
   const have=new Map(words.map(w=>[w.k,w]));
-  loadItems=parseInput(text).map(it=>{
+  const parsed=parseInput(text); loadDropped=parsed.dropped||[];
+  loadItems=parsed.map(it=>{
     const dup=have.has(it.k);
     let ru=it.ru, src=it.ru.length?'given':'';
     if(!ru.length&&PHRASES[it.en]){ru=PHRASES[it.en].slice();src='dict'}
@@ -940,6 +1017,7 @@ function renderPreview(){
   box.innerHTML=`<div class="toolbar"><h2 id="pvTitle"></h2><span class="row"><button class="linkish" id="pvAll" type="button">Выбрать все новые</button><button class="linkish" id="pvNone" type="button">Снять все</button></span></div>
     <div class="preview">${loadItems.map(rowHTML).join('')}</div>
     <p class="hint">Перевод и само слово можно поправить. Значения разделяйте точкой с запятой.</p>
+    ${loadDropped.length?`<details class="dropped"><summary>Пропущено ${loadDropped.length}: имена, сокращения, редкие слова и ошибки распознавания</summary><p>${loadDropped.slice(0,300).map(esc).join(', ')}</p><p class="hint">Если среди них есть нужное слово, впишите его в поле выше списком через запятую — списки не фильтруются.</p></details>`:''}
     <div class="row"><button class="btn" id="loadAdd" type="button">Добавить</button><button class="btn plain" id="loadCancel" type="button">Отмена</button></div>`;
   loadItems.forEach((it,i)=>bindRow(it,i));
   $('pvAll').onclick=()=>{loadItems.forEach((it,i)=>{it.on=!it.dup;$('pv-c-'+i).checked=it.on});renderCount()};
