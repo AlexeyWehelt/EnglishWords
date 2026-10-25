@@ -159,7 +159,7 @@ tr:last-child td{border-bottom:0}
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 6</p>
+    <p class="intro" style="font-size:.75rem">версия 7</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -411,7 +411,9 @@ const RMIN = -5, RMAX = 5, LEARNED = 3;
 const FAST = 3, SLOW = 15;            // seconds: answered within FAST -> full +1; after SLOW -> only +0.1
 const PENALTY = 1;
 const SESSION_GAP = 30*60*1000;       // a pause longer than this starts a new lesson in "Занятия"
-const SPEAK_DELAY = 500;              // ms between showing the word and saying it
+const SPEAK_DELAY = 500;
+/* A word whose rating goes above +5 moves to the archive: it is no longer shown and is left out of the statistics. */
+const active=()=>words.filter(w=>!w.a), archived=()=>words.filter(w=>w.a);              // ms between showing the word and saying it
 
 /* ---------- Accounts: same scheme as the maze game (name + 4 digits, Firebase) ---------- */
 const keyOf = name => name.trim().toLowerCase().replace(/[.#$\[\]\/\s]+/g,'_').slice(0,16);
@@ -508,7 +510,7 @@ function enter(){
   B.watch(me,u=>{
     const map=u.words||{};
     words=Object.entries(map).filter(([k,w])=>w&&w.en&&Array.isArray(w.ru)&&w.ru.length)
-      .map(([k,w])=>({...w,k,r:num(w.r),seen:num(w.seen),ok:num(w.ok),t:num(w.t),last:num(w.last)}));
+      .map(([k,w])=>({...w,k,r:num(w.r),seen:num(w.seen),ok:num(w.ok),t:num(w.t),last:num(w.last),a:num(w.a)}));
     sessions=Object.entries(u.sessions||{}).map(([id,s])=>({id,start:num(s.start),end:num(s.end),n:num(s.n),ok:num(s.ok)})).filter(s=>s.start);
     if(cur) cur=words.find(w=>w.k===cur.k)||cur;
     progress();
@@ -565,32 +567,42 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 
 /* ---------- Progress lamp ---------- */
 function progress(){
-  const n=words.length, learned=words.filter(w=>w.r>=LEARNED).length, pct=n?Math.round(learned/n*100):0;
-  $('lamp').dataset.state=!n?'off':learned===n?'green':learned>0?'amber':'off';
-  $('lampTitle').textContent=n&&learned===n?'Все слова выучены':'Успеваемость '+pct+'%';
-  $('lampSub').textContent=n?`${learned} из ${n} слов усвоено`:'слов пока нет';
+  const act=active(), n=act.length, learned=act.filter(w=>w.r>=LEARNED).length, pct=n?Math.round(learned/n*100):(words.length?100:0);
+  $('lamp').dataset.state=!words.length?'off':learned===n?'green':learned>0?'amber':'off';
+  const arch=words.length-n;
+  $('lampTitle').textContent=words.length&&learned===n?'Все слова выучены':'Успеваемость '+pct+'%';
+  $('lampSub').textContent=!words.length?'слов пока нет':(n?`${learned} из ${n} слов усвоено`:'все слова в архиве')+(arch&&n?` · в архиве ${arch}`:'');
   $('barFill').style.width=pct+'%';
 }
 
 /* ---------- Усваиваемость ---------- */
 let filter='all';
 function renderStats(){
-  const n=words.length;
-  const groups={all:words,learned:words.filter(w=>w.r>=LEARNED),mid:words.filter(w=>w.seen&&w.r>=0&&w.r<LEARNED),
-    hard:words.filter(w=>w.r<0),fresh:words.filter(w=>!w.seen)};
-  const seen=words.reduce((s,w)=>s+w.seen,0), ok=words.reduce((s,w)=>s+w.ok,0);
-  const timed=words.filter(w=>w.t>0), avgT=timed.length?timed.reduce((s,w)=>s+w.t,0)/timed.length:0;
-  const list=groups[filter].slice().sort((a,b)=>a.r-b.r||b.seen-a.seen||a.en.localeCompare(b.en));
+  const act=active(), n=act.length;
+  const groups={all:act,learned:act.filter(w=>w.r>=LEARNED),mid:act.filter(w=>w.seen&&w.r>=0&&w.r<LEARNED),
+    hard:act.filter(w=>w.r<0),fresh:act.filter(w=>!w.seen),archive:archived()};
+  const seen=act.reduce((s,w)=>s+w.seen,0), ok=act.reduce((s,w)=>s+w.ok,0);
+  const timed=act.filter(w=>w.t>0), avgT=timed.length?timed.reduce((s,w)=>s+w.t,0)/timed.length:0;
+  const list=filter==='archive'?groups.archive.slice().sort((a,b)=>b.a-a.a)
+    :groups[filter].slice().sort((a,b)=>a.r-b.r||b.seen-a.seen||a.en.localeCompare(b.en));
+  const row=w=>filter==='archive'
+    ?`<div class="item"><div class="w"><b lang="en">${esc(w.en)}</b><span>${esc(w.ru.join('; '))}</span></div>
+      <div class="r"><span>в архиве с ${DF.format(w.a)}</span><button class="linkish" type="button" data-back="${esc(w.k)}">Вернуть в тренировку</button></div></div>`
+    :`<div class="item"><div class="w"><b lang="en">${esc(w.en)}</b><span>${esc(w.ru.join('; '))}</span></div>
+      <div class="r">${meter(w.r)}<span>${w.seen?`верно ${w.ok} из ${w.seen}${w.t?' · '+fmtSec(w.t):''}`:'не встречалось'}</span></div></div>`;
   $('view-stats').innerHTML=`<h2>Усваиваемость слов</h2>
     <div class="sum"><div class="g"><b>${groups.learned.length}</b><span>усвоено (от +3)</span></div><div class="y"><b>${groups.mid.length}</b><span>в процессе</span></div>
       <div class="r"><b>${groups.hard.length}</b><span>трудные (ниже 0)</span></div><div><b>${groups.fresh.length}</b><span>ещё не было</span></div></div>
-    <p class="hint">Верных ответов: ${seen?Math.round(ok/seen*100)+'%':'—'}${avgT?` · среднее время верного ответа ${fmtSec(avgT)}`:''}</p>
-    <div class="filters">${[['all','Все',n],['hard','Трудные',groups.hard.length],['mid','В процессе',groups.mid.length],['learned','Усвоено',groups.learned.length],['fresh','Ещё не было',groups.fresh.length]]
+    <p class="hint">Верных ответов: ${seen?Math.round(ok/seen*100)+'%':'—'}${avgT?` · среднее время верного ответа ${fmtSec(avgT)}`:''}${groups.archive.length?`<br>Слов в архиве: ${groups.archive.length}. Они набрали больше +5 и в тренировке и статистике больше не участвуют.`:''}</p>
+    <div class="filters">${[['all','Все',n],['hard','Трудные',groups.hard.length],['mid','В процессе',groups.mid.length],['learned','Усвоено',groups.learned.length],['fresh','Ещё не было',groups.fresh.length],['archive','Архив',groups.archive.length]]
       .map(([k,t,c])=>`<button class="chip" type="button" data-f="${k}" aria-pressed="${filter===k}">${t} · ${c}</button>`).join('')}</div>
-    <div class="list">${list.length?list.map(w=>`<div class="item"><div class="w"><b lang="en">${esc(w.en)}</b><span>${esc(w.ru.join('; '))}</span></div>
-      <div class="r">${meter(w.r)}<span>${w.seen?`верно ${w.ok} из ${w.seen}${w.t?' · '+fmtSec(w.t):''}`:'не встречалось'}</span></div></div>`).join(''):
-      `<p class="empty">${n?'В этой группе слов нет.':'В словаре пока нет слов.'}</p>`}</div>`;
+    <div class="list">${list.length?list.map(row).join(''):
+      `<p class="empty">${filter==='archive'?'В архиве пока нет слов.':n?'В этой группе слов нет.':words.length?'Все слова в архиве.':'В словаре пока нет слов.'}</p>`}</div>`;
   document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filter=b.dataset.f;renderStats()});
+  document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{
+    const w=words.find(x=>x.k===b.dataset.back); if(!w) return;
+    w.a=0; w.r=LEARNED; const {k,...data}=w; B.save(me,k,data).catch(()=>{}); progress(); renderStats();
+  });
 }
 
 /* ---------- Занятия ---------- */
@@ -622,7 +634,7 @@ function logAnswer(ok){
 /* ---------- Picking the next word ---------- */
 let recent=[];
 function pick(){
-  let cand=words.filter(w=>!recent.includes(w.k)); if(!cand.length) cand=words;
+  const pool=active(); let cand=pool.filter(w=>!recent.includes(w.k)); if(!cand.length) cand=pool;
   const wt=w=>Math.pow(2,(LEARNED-w.r)/1.5);    // -5 -> ~40x, 0 -> 4x, +3 -> 1x, +5 -> 0.4x
   let x=Math.random()*cand.reduce((s,w)=>s+wt(w),0);
   for(const w of cand){x-=wt(w);if(x<=0)return w}
@@ -685,16 +697,22 @@ function renderStart(){
     card.innerHTML=`<h2>Словарь пока пуст</h2><p class="intro">В этом аккаунте ещё нет слов. Тренировка начнётся, как только они будут добавлены.</p>`;
     return;
   }
+  if(!active().length){
+    phase='empty';
+    card.innerHTML=`<h2>Все слова выучены</h2><p class="intro">Все ${words.length} слов набрали больше +5 и перенесены в архив. Их можно вернуть в тренировку на вкладке «Усваиваемость».</p>`;
+    return;
+  }
   phase='start';
-  card.innerHTML=`<div class="meta">${words.length} слов в словаре</div>
+  const arch=archived().length;
+  card.innerHTML=`<div class="meta">${active().length} слов в тренировке${arch?' · '+arch+' в архиве':''}</div>
     <p class="intro">Программа покажет и произнесёт английское слово. Скажите перевод по-русски в микрофон или напишите его в поле и нажмите Enter. Чем быстрее верный ответ, тем больше растёт рейтинг слова.</p>
     <button class="btn big" id="startBtn" type="button">Начать</button>`;
   $('startBtn').onclick=()=>{sessStart=Date.now();nextWord()}; $('startBtn').focus();
 }
 function nextWord(){
   stopRec(); hush(); clearTimeout(speakTimer);
-  if(!words.length){renderStart();return}
-  cur=pick(); recent.push(cur.k); while(recent.length>Math.min(4,words.length-1)) recent.shift();
+  if(!active().length){renderStart();return}
+  cur=pick(); recent.push(cur.k); while(recent.length>Math.min(4,active().length-1)) recent.shift();
   phase='ask'; firstAt=0;
   card.innerHTML=`<div class="meta" id="meta">${metaHTML(cur)}</div>
     <button class="word" id="word" type="button" lang="en" title="Нажмите, чтобы услышать ещё раз">${esc(cur.en)}</button>
@@ -770,12 +788,15 @@ function process(answers,shown,idk){
   else{
     const before=cur.r;
     if(ok){
-      cur.r=round2(clamp(cur.r+speedFactor(sec),RMIN,RMAX)); cur.ok++;
+      const nr=cur.r+speedFactor(sec);
+      if(nr>RMAX+1e-9){cur.a=Date.now();cur.r=RMAX}else cur.r=round2(clamp(nr,RMIN,RMAX));
+      cur.ok++;
       cur.t=round2(cur.t?cur.t*.7+sec*.3:sec);
     } else cur.r=round2(clamp(cur.r-PENALTY,RMIN,RMAX));
     cur.seen++; cur.last=Date.now();
     const d=round2(cur.r-before);
-    note=`Рейтинг ${d>=0?'+':'−'}${Math.abs(d).toFixed(1).replace('.',',')} → ${fmtR(cur.r)}`+(ok?` · ответ через ${fmtSec(sec)}`:'');
+    note=cur.a?`Рейтинг больше +5: слово выучено и перенесено в архив · ответ через ${fmtSec(sec)}`
+      :`Рейтинг ${d>=0?'+':'−'}${Math.abs(d).toFixed(1).replace('.',',')} → ${fmtR(cur.r)}`+(ok?` · ответ через ${fmtSec(sec)}`:'');
     const {k,...data}=cur;
     B.save(me,k,data).catch(()=>{const s=$('saveErr');if(s)s.hidden=false});
     logAnswer(ok);
