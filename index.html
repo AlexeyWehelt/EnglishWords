@@ -271,18 +271,19 @@ function baseWords(){
     out[wordKey(e)]={en:e,ru:ru.split(';').map(s=>s.trim()).filter(Boolean),r:0,seen:0,ok:0,last:0}});
   return out;
 }
-const ROOT='vocab/users';
+// Stored next to the maze players (current database rules allow it); the w_ prefix keeps trainer accounts separate.
+const ROOT='users/w_';
 function makeFirebase(cfg){
   const fb=window.firebase; fb.initializeApp(cfg); const db=fb.database(); let off=null;
   return {
     async login(key,name,h){
-      const res=await db.ref(ROOT+'/'+key).transaction(cur=>cur===null?{name,h,c:Date.now(),words:SEED_ACCOUNTS.includes(key)?baseWords():null}:undefined);
+      const res=await db.ref(ROOT+key).transaction(cur=>cur===null?{name,h,c:Date.now(),words:SEED_ACCOUNTS.includes(key)?baseWords():null}:undefined);
       const u=res.snapshot.val(); if(!u||u.h!==h) return {ok:false};
       return {ok:true,name:u.name||name};
     },
-    watch(key,fn){off&&off();const r=db.ref(ROOT+'/'+key+'/words');const cb=s=>fn(s.val()||{});r.on('value',cb);off=()=>r.off('value',cb)},
+    watch(key,fn){off&&off();const r=db.ref(ROOT+key+'/words');const cb=s=>fn(s.val()||{});r.on('value',cb);off=()=>r.off('value',cb)},
     unwatch(){off&&off();off=null},
-    save(key,k,w){return db.ref(ROOT+'/'+key+'/words/'+k).set(w)}
+    save(key,k,w){return db.ref(ROOT+key+'/words/'+k).set(w)}
   };
 }
 /* same-browser backend for testing: add #local to the address */
