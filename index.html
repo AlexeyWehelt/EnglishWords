@@ -130,6 +130,7 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
+    <p class="intro" style="font-size:.75rem">версия 3</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -334,7 +335,10 @@ $('loginForm').onsubmit=async e=>{
     try{localStorage.setItem('en-trainer-name',name)}catch(err){}
     me=key; myName=res.name; msg.textContent=''; $('lcode').value='';
     enter();
-  }catch(err){msg.classList.add('err');msg.textContent='Не получилось связаться с сервером. Проверьте интернет и попробуйте ещё раз.'}
+  }catch(err){msg.classList.add('err');
+    const detail=String((err&&(err.code||err.message))||err||'').slice(0,120);
+    msg.textContent=/permission/i.test(detail)?'Сервер не разрешил запись ('+detail+'). Обновите страницу (Ctrl+F5) и попробуйте ещё раз.'
+      :'Не получилось связаться с сервером. Проверьте интернет и попробуйте ещё раз.'+(detail?' ('+detail+')':'')}
   finally{logging=false;$('loginBtn').disabled=false}
 };
 function enter(){
