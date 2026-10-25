@@ -145,6 +145,9 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
 .dropped{font-size:.85rem;color:var(--muted)}
 .dropped summary{cursor:pointer;color:var(--accent)}
 .dropped p{margin:6px 0 0;overflow-wrap:anywhere}
+.ru-edit{width:100%;margin-top:4px;padding:6px 8px;font-size:.88rem;border-radius:8px}
+.ru-edit.saved{outline:2px solid var(--ok)} .ru-edit.err{outline:2px solid var(--bad)}
+.del{border:0;background:none;color:var(--bad);font:inherit;font-size:.78rem;cursor:pointer;padding:2px 0;text-decoration:underline;text-underline-offset:3px}
 .empty{color:var(--muted);text-align:center;padding:18px 0;margin:0}
 @media (max-width:460px){.sum{grid-template-columns:repeat(2,minmax(0,1fr))}.menu .who{margin-left:0;width:100%;padding:4px 8px}}
 @media (prefers-reduced-motion:no-preference){
@@ -183,7 +186,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 9</p>
+    <p class="intro" style="font-size:.75rem">версия 10</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -468,7 +471,8 @@ function makeFirebase(cfg){
     unwatch(){off&&off();off=null},
     save(key,k,w){return db.ref(ROOT+key+'/words/'+k).set(w)},
     saveSession(key,id,s){return db.ref(ROOT+key+'/sessions/'+id).set(s)},
-    addWords(key,map){return db.ref(ROOT+key+'/words').update(map)}
+    addWords(key,map){return db.ref(ROOT+key+'/words').update(map)},
+    removeWord(key,k){return db.ref(ROOT+key+'/words/'+k).remove()}
   };
 }
 /* same-browser backend for testing: add #local to the address */
@@ -485,7 +489,8 @@ function makeLocal(){
     unwatch(){fn=null;me=null},
     async save(key,k,w){setAt(key,'words',k,w)},
     async saveSession(key,id,s){setAt(key,'sessions',id,s)},
-    async addWords(key,map){for(const k in map)setAt(key,'words',k,map[k])}
+    async addWords(key,map){for(const k in map)setAt(key,'words',k,map[k])},
+    async removeWord(key,k){const u=get();if(u[key]&&u[key].words){delete u[key].words[k];put(u);setTimeout(emit,0)}}
   };
 }
 const loadScript=src=>new Promise((ok,no)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=no;document.head.appendChild(s)});
@@ -542,7 +547,7 @@ function enter(){
     if(cur) cur=words.find(w=>w.k===cur.k)||cur;
     progress();
     if(first){first=false;show('train')}
-    else if(view==='stats') renderStats();
+    else if(view==='stats'){ if(!(editMode&&document.activeElement&&document.activeElement.classList.contains('ru-edit'))) renderStats(); }
     else if(view==='lessons') renderLessons();
     else if(phase==='start'||phase==='empty') renderStart();
   });
@@ -559,6 +564,7 @@ const VIEWS=['train','stats','lessons','load'];
 function show(v){
   view=v; VIEWS.forEach(n=>{$('view-'+n).hidden=n!==v;$('tab-'+n).setAttribute('aria-current',n===v)});
   if(v!=='train'){stopRec();hush()}
+  if(v!=='stats') editMode=false;
   if(v==='stats') renderStats();
   else if(v==='lessons') renderLessons();
   else if(v==='load') renderLoad();
@@ -614,12 +620,16 @@ function renderStats(){
   const timed=act.filter(w=>w.t>0), avgT=timed.length?timed.reduce((s,w)=>s+w.t,0)/timed.length:0;
   const list=filter==='archive'?groups.archive.slice().sort((a,b)=>b.a-a.a)
     :groups[filter].slice().sort((a,b)=>a.r-b.r||b.seen-a.seen||a.en.localeCompare(b.en));
+  const ruCell=w=>editMode
+    ?`<input type="text" class="ru-edit" id="ed-${esc(w.k)}" data-k="${esc(w.k)}" value="${esc(w.ru.join('; '))}" aria-label="Значения слова ${esc(w.en)}"><button class="del" type="button" data-del="${esc(w.k)}" aria-label="Удалить ${esc(w.en)}">Удалить</button>`
+    :`<span>${esc(w.ru.join('; '))}</span>`;
   const row=w=>filter==='archive'
-    ?`<div class="item"><div class="w"><b lang="en">${esc(w.en)}</b><span>${esc(w.ru.join('; '))}</span></div>
+    ?`<div class="item"><div class="w"><b lang="en">${esc(w.en)}</b>${ruCell(w)}</div>
       <div class="r"><span>в архиве с ${DF.format(w.a)}</span><button class="linkish" type="button" data-back="${esc(w.k)}">Вернуть в тренировку</button></div></div>`
-    :`<div class="item"><div class="w"><b lang="en">${esc(w.en)}</b><span>${esc(w.ru.join('; '))}</span></div>
+    :`<div class="item"><div class="w"><b lang="en">${esc(w.en)}</b>${ruCell(w)}</div>
       <div class="r">${meter(w.r)}<span>${w.seen?`верно ${w.ok} из ${w.seen}${w.t?' · '+fmtSec(w.t):''}`:'не встречалось'}</span></div></div>`;
   $('view-stats').innerHTML=`<h2>Усваиваемость слов</h2>
+    ${editMode?`<div class="practice" role="status"><span><b>Режим редактирования.</b> Исправьте значения слова (разделяйте точкой с запятой) и нажмите Enter. Чтобы выйти, нажмите R дважды.</span><button class="linkish" id="editOff" type="button">Выйти из режима</button></div>`:''}
     <div class="sum"><div class="g"><b>${groups.learned.length}</b><span>усвоено (от +3)</span></div><div class="y"><b>${groups.mid.length}</b><span>в процессе</span></div>
       <div class="r"><b>${groups.hard.length}</b><span>трудные (ниже 0)</span></div><div><b>${groups.fresh.length}</b><span>ещё не было</span></div></div>
     <p class="hint">Верных ответов: ${seen?Math.round(ok/seen*100)+'%':'—'}${avgT?` · среднее время верного ответа ${fmtSec(avgT)}`:''}${groups.archive.length?`<br>Слов в архиве: ${groups.archive.length}. Они набрали больше +5 и в тренировке и статистике больше не участвуют.`:''}</p>
@@ -628,9 +638,38 @@ function renderStats(){
     <div class="list">${list.length?list.map(row).join(''):
       `<p class="empty">${filter==='archive'?'В архиве пока нет слов.':n?'В этой группе слов нет.':words.length?'Все слова в архиве.':'В словаре пока нет слов.'}</p>`}</div>`;
   document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filter=b.dataset.f;renderStats()});
+  if(editMode) bindEdit();
   document.querySelectorAll('[data-back]').forEach(b=>b.onclick=()=>{
     const w=words.find(x=>x.k===b.dataset.back); if(!w) return;
     w.a=0; w.r=LEARNED; const {k,...data}=w; B.save(me,k,data).catch(()=>{}); progress(); renderStats();
+  });
+}
+
+/* RR on the progress tab: edit meanings, remove wrong words */
+let editMode=false, lastR=0;
+document.addEventListener('keydown',e=>{
+  if(e.code!=='KeyR'||e.ctrlKey||e.metaKey||e.altKey||!me||view!=='stats') return;
+  if(e.target&&/INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  const now=Date.now();
+  if(now-lastR<450){lastR=0;editMode=!editMode;renderStats()} else lastR=now;
+});
+function bindEdit(){
+  const off=$('editOff'); if(off) off.onclick=()=>{editMode=false;renderStats()};
+  document.querySelectorAll('.ru-edit').forEach(inp=>{
+    const commit=()=>{
+      const w=words.find(x=>x.k===inp.dataset.k); if(!w) return;
+      const ru=inp.value.split(';').map(x=>x.trim()).filter(Boolean);
+      if(!ru.length){inp.value=w.ru.join('; ');return}
+      if(ru.join('; ')===w.ru.join('; ')) return;
+      w.ru=ru; const {k,...data}=w;
+      B.save(me,k,data).then(()=>{inp.classList.add('saved');setTimeout(()=>inp.classList.remove('saved'),1200)}).catch(()=>inp.classList.add('err'));
+    };
+    inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();commit();inp.blur()} else if(e.key==='Escape'){const w=words.find(x=>x.k===inp.dataset.k);if(w)inp.value=w.ru.join('; ');inp.blur()}};
+    inp.onblur=commit;
+  });
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{
+    if(b.dataset.armed!=='1'){b.dataset.armed='1';b.textContent='Точно удалить?';setTimeout(()=>{if(b.isConnected){b.dataset.armed='';b.textContent='Удалить'}},3000);return}
+    const k=b.dataset.del; words=words.filter(x=>x.k!==k); B.removeWord(me,k).catch(()=>{}); progress(); renderStats();
   });
 }
 
@@ -1172,21 +1211,24 @@ function toggleMic(){
   const inp=$('ans'), btn=$('micBtn'); inp.value='';
   const r=new Rec(); rec=r;
   // continuous mode keeps listening through a short pause, so a single short word is not cut off
-  r.lang='ru-RU'; r.interimResults=true; r.maxAlternatives=5; r.continuous=true;
+  r.lang='ru-RU'; r.interimResults=true; r.maxAlternatives=5; r.continuous=false;
   const live=()=>rec===r&&!r.cancelled&&phase==='ask'&&$('micBtn')===btn;
   let alts=null, heard='';
   btn.classList.add('listening'); $('micLbl').textContent='Подождите'; inp.placeholder='Включаю микрофон…';
   r.onaudiostart=()=>{if(!live())return;$('micLbl').textContent='Слушаю';inp.placeholder='Слушаю…';
     setStatus('Говорите. Короткое слово лучше сказать фразой: «предлог в», «союз и».')};
   r.onspeechstart=()=>{if(live()&&!firstAt)firstAt=Date.now()};
+  let quiet=null;
   r.onresult=e=>{
     if(!live())return; if(!firstAt)firstAt=Date.now();
+    // if the browser keeps waiting after the learner has stopped talking, finish after 0.8 s of no new words
+    clearTimeout(quiet); quiet=setTimeout(()=>{if(live()){try{r.stop()}catch(err){}}},800);
     let txt='';for(let i=e.resultIndex;i<e.results.length;i++)txt+=e.results[i][0].transcript;
     heard=(heard+' '+txt).trim(); inp.value=txt.trim()||heard;
     const res=e.results[e.results.length-1];
     if(res.isFinal){
       alts=Array.from(res).map(a=>a.transcript.trim()).filter(Boolean);
-      if(alts.length){const a2=alts.slice();stopRec();resetMic();process(a2,a2[0])}   // answer as soon as a phrase is final
+      if(alts.length){clearTimeout(quiet);const a2=alts.slice();stopRec();resetMic();process(a2,a2[0])}   // answer as soon as a phrase is final
     }
   };
   r.onerror=e=>{if(!live())return;
