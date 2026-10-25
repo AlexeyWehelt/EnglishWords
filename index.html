@@ -69,6 +69,11 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
 .verdict.ok b{color:var(--ok)} .verdict.bad b{color:var(--bad)}
 .meanings{font-size:1.1rem;font-weight:500}
 .your{font-size:.85rem;color:var(--muted)}
+.example{margin-top:6px;border:0;border-top:1px dashed var(--bad);background:none;color:var(--ink);text-align:center;align-items:center;padding:10px 0 0;cursor:pointer;display:flex;flex-direction:column;gap:2px;font:inherit}
+.example:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+.ex-en{font-family:var(--f-word);font-size:1.15rem;font-weight:500}
+.ex-en::before{content:"▶ ";font-size:.75em;color:var(--bad);vertical-align:.1em}
+.ex-ru{font-size:.92rem;color:var(--muted)}
 .dots{display:inline-flex;gap:3px}
 .dots i{width:8px;height:8px;border-radius:50%;background:var(--line)}
 .dots i.on{background:var(--ok)}
@@ -130,7 +135,7 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 3</p>
+    <p class="intro" style="font-size:.75rem">версия 4</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -254,6 +259,126 @@ word|слово
 work|работа; работать
 print|печатать; печать
 woman|женщина`;
+/* A simple sentence for each base word: shown and spoken after a wrong answer */
+const EXAMPLES_SRC = `about|We talk about music.|Мы говорим о музыке.
+after|I play after school.|Я играю после школы.
+already|I have already eaten.|Я уже поел.
+also|I also like cats.|Я тоже люблю кошек.
+always|She always smiles.|Она всегда улыбается.
+and|I have a cat and a dog.|У меня есть кошка и собака.
+any|Do you have any questions?|У тебя есть какие-нибудь вопросы?
+at|I am at school.|Я в школе.
+because|I stay home because it is cold.|Я остаюсь дома, потому что холодно.
+before|Wash your hands before dinner.|Помой руки перед ужином.
+but|I am tired, but happy.|Я устал, но счастлив.
+each|Each child has a book.|У каждого ребёнка есть книга.
+then|First eat, then play.|Сначала поешь, потом играй.
+else|What else do you want?|Что ещё ты хочешь?
+for|This gift is for you.|Этот подарок для тебя.
+in|The cat is in the box.|Кошка в коробке.
+just|I just want to sleep.|Я просто хочу спать.
+like|I like apples.|Мне нравятся яблоки.
+near|The shop is near my house.|Магазин рядом с моим домом.
+never|I never eat fish.|Я никогда не ем рыбу.
+of|A cup of tea, please.|Чашку чая, пожалуйста.
+often|We often go to the park.|Мы часто ходим в парк.
+on|The book is on the table.|Книга на столе.
+only|I have only one pen.|У меня только одна ручка.
+or|Tea or coffee?|Чай или кофе?
+out|Let's go out.|Давай выйдем на улицу.
+some|I want some water.|Я хочу немного воды.
+soon|See you soon!|Скоро увидимся!
+today|Today is Sunday.|Сегодня воскресенье.
+to|I go to school.|Я иду в школу.
+usually|I usually get up at seven.|Я обычно встаю в семь.
+here|Come here, please.|Иди сюда, пожалуйста.
+how|How are you?|Как дела?
+that|That is my bike.|Это мой велосипед.
+there|My friend lives there.|Мой друг живёт там.
+these|These apples are red.|Эти яблоки красные.
+this|This is my room.|Это моя комната.
+those|Those birds are loud.|Те птицы шумные.
+what|What is this?|Что это?
+when|When do you get up?|Когда ты встаёшь?
+where|Where is my phone?|Где мой телефон?
+who|Who is that boy?|Кто тот мальчик?
+why|Why are you sad?|Почему ты грустный?
+answer|Please answer the question.|Пожалуйста, ответь на вопрос.
+ask|Can I ask you a question?|Можно задать тебе вопрос?
+bore|Long films bore me.|Длинные фильмы мне надоедают.
+check|Check your answer.|Проверь свой ответ.
+come|Come to my party!|Приходи ко мне на праздник!
+complete|Complete the task.|Заверши задание.
+do|I do my homework.|Я делаю домашнее задание.
+download|Download the game.|Скачай игру.
+draw|I like to draw cats.|Я люблю рисовать кошек.
+drink|I drink milk.|Я пью молоко.
+eat|We eat soup.|Мы едим суп.
+get|I get a letter.|Я получаю письмо.
+give|Give me the ball.|Дай мне мяч.
+go|Let's go home.|Пойдём домой.
+have|I have a sister.|У меня есть сестра.
+know|I know the answer.|Я знаю ответ.
+listen|Listen to the music.|Послушай музыку.
+live|I live in a big city.|Я живу в большом городе.
+look|Look at the sky.|Посмотри на небо.
+love|I love my mom.|Я люблю свою маму.
+make|Let's make a cake.|Давай сделаем торт.
+move|Don't move!|Не двигайся!
+need|I need help.|Мне нужна помощь.
+put|Put the book on the desk.|Положи книгу на парту.
+run|I run fast.|Я быстро бегаю.
+say|Say hello.|Скажи «привет».
+see|I see a bird.|Я вижу птицу.
+send|Send me a photo.|Отправь мне фото.
+set|Set the alarm for seven.|Поставь будильник на семь.
+sing|We sing a song.|Мы поём песню.
+sleep|The baby is sleeping.|Малыш спит.
+speak|I speak English.|Я говорю по-английски.
+study|I study at school.|Я учусь в школе.
+swim|Fish swim in water.|Рыбы плавают в воде.
+take|Take my hand.|Возьми меня за руку.
+talk|Let's talk.|Давай поговорим.
+tell|Tell me a story.|Расскажи мне историю.
+think|I think so.|Я так думаю.
+use|Use a pencil.|Используй карандаш.
+want|I want ice cream.|Я хочу мороженое.
+watch|We watch TV.|Мы смотрим телевизор.
+arrow|The arrow shows the way.|Стрелка показывает путь.
+bad|The weather is bad.|Погода плохая.
+child|The child is playing.|Ребёнок играет.
+children|The children are at school.|Дети в школе.
+date|What is the date today?|Какое сегодня число?
+family|I love my family.|Я люблю свою семью.
+fast|The car is fast.|Машина быстрая.
+favorite|Blue is my favorite color.|Синий — мой любимый цвет.
+good|This is a good book.|Это хорошая книга.
+great|That's a great idea!|Отличная идея!
+home|I am going home.|Я иду домой.
+later|See you later.|Увидимся позже.
+lesson|The lesson starts at nine.|Урок начинается в девять.
+letter|I write a letter.|Я пишу письмо.
+life|Life is beautiful.|Жизнь прекрасна.
+man|The man is tall.|Мужчина высокий.
+page|Open page ten.|Открой десятую страницу.
+paper|I need a sheet of paper.|Мне нужен лист бумаги.
+parents|My parents are at work.|Мои родители на работе.
+poor|The poor cat is hungry.|Бедная кошка голодна.
+ready|Are you ready?|Ты готов?
+room|My room is small.|Моя комната маленькая.
+science|I like science.|Мне нравится наука.
+screen|Look at the screen.|Посмотри на экран.
+sentence|Read the sentence.|Прочитай предложение.
+slow|The turtle is slow.|Черепаха медленная.
+sometimes|I sometimes read comics.|Я иногда читаю комиксы.
+song|This song is nice.|Эта песня красивая.
+time|What time is it?|Который час?
+word|Write this word.|Напиши это слово.
+work|My dad goes to work.|Мой папа идёт на работу.
+print|Print the picture.|Распечатай картинку.
+woman|The woman is my teacher.|Эта женщина — моя учительница.`;
+const EXAMPLES={};
+EXAMPLES_SRC.split('\n').forEach(l=>{const [w,en,ru]=l.split('|');if(w&&en&&ru)EXAMPLES[w.trim()]={en:en.trim(),ru:ru.trim()}});
 const SEED_ACCOUNTS = ['юра'];        // these new accounts start with the base word set; others start empty
 const LEARNED = 4, MAXR = 5;          // rating 0..5; a word counts as learned from 4
 const SPEAK_DELAY = 500;              // ms between showing the word and saying it
@@ -421,11 +546,21 @@ function close(a,b){
   let p=0;while(p<a.length&&p<b.length&&a[p]===b[p])p++;
   return p>=Math.max(4,Math.min(a.length,b.length)-2)&&Math.abs(a.length-b.length)<=3;
 }
+/* Short words (о, и, в, на…) are often heard by speech recognition as a stretched sound, a letter name
+   or a Latin look-alike: bring those back to the plain word. */
+const LAT={o:'о',a:'а',y:'у',k:'к',c:'с',e:'е',u:'у',i:'и',b:'в',v:'в',s:'с'};
+const SHORT={оу:'о',ох:'о',оо:'о',ой:'о',ии:'и',иии:'и',ве:'в',вэ:'в',фэ:'в',ф:'в',ка:'к',кэ:'к',эс:'с',ээ:'е',аа:'а',уу:'у',наа:'на'};
+function fixShort(t){
+  if(t.length>4) return t;
+  if(t.length===1&&LAT[t]) t=LAT[t];
+  t=t.replace(/(.)\1+/g,'$1');                 // ооо -> о, ии -> и
+  return SHORT[t]||t;
+}
 function isCorrect(answers,w){
   const accepted=w.ru.flatMap(m=>m.split(',')).map(norm).filter(Boolean);
   return answers.some(ans=>{
-    const parts=ans.split(/[,;/]| или /).map(norm).filter(Boolean);
-    const tokens=parts.flatMap(p=>[p,...p.split(' ')]).filter(t=>t.length>1);   // spoken answers come as phrases
+    const parts=ans.toLowerCase().split(/[,;/]| или /).map(p=>norm(p.replace(/[a-z]/g,c=>LAT[c]||c))).filter(Boolean);
+    const tokens=parts.flatMap(p=>[p,...p.split(' ')]).map(fixShort).filter(Boolean);   // spoken answers come as phrases
     return tokens.some(p=>accepted.some(a=>close(p,a)||(a.includes(' ')&&a.split(' ').some(t=>t.length>3&&close(p,t)))));
   });
 }
@@ -492,7 +627,7 @@ function toggleMic(){
   r.onerror=e=>{if(r.cancelled)return;
     const m={'not-allowed':'Нет доступа к микрофону. Разрешите его в настройках браузера или напишите ответ.',
       'service-not-allowed':'Распознавание речи недоступно. Разрешите микрофон или напишите ответ.',
-      'no-speech':'Ничего не услышал. Нажмите микрофон и скажите ещё раз.',
+      'no-speech':'Ничего не услышал. Нажмите микрофон и скажите ещё раз. Короткие слова вроде «о» или «и» лучше произносить чётко и протяжно или написать.',
       'audio-capture':'Микрофон не найден.','network':'Нет связи с сервисом распознавания речи.'}[e.error];
     if(m) setStatus(m,true)};
   r.onend=()=>{
@@ -515,11 +650,14 @@ function process(answers,shown){
   progress();
   $('meta').innerHTML=`${dots(cur.r)}<span>показано ${cur.seen} раз</span>`;
   $('form').remove(); $('micBtn').remove(); $('status').remove();
+  const exm=!ok&&(cur.ex&&cur.ex.en?cur.ex:EXAMPLES[cur.en]);
   card.insertAdjacentHTML('beforeend',`<div class="verdict ${ok?'ok':'bad'}"><b>${ok?'Правильно':'Неправильно'}</b>
-      <div class="meanings">${cur.ru.map(esc).join('; ')}</div><span class="your">Ваш ответ: ${esc(shown)}</span></div>
+      <div class="meanings">${cur.ru.map(esc).join('; ')}</div><span class="your">Ваш ответ: ${esc(shown)}</span>
+      ${exm?`<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" lang="en">${esc(exm.en)}</span><span class="ex-ru">${esc(exm.ru)}</span></button>`:''}</div>
     <button class="btn big" id="nextBtn" type="button">Далее</button>
     <p class="status err" id="saveErr" hidden>Результат не сохранился: нет связи с сервером.</p>`);
   const nb=$('nextBtn'); nb.onclick=nextWord; nb.focus();
+  if(exm){$('exBtn').onclick=()=>speak(exm.en);speakTimer=setTimeout(()=>{if(phase==='result')speak(exm.en)},400)}
 }
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&phase==='result'&&view==='train'&&e.target.tagName!=='BUTTON'){e.preventDefault();nextWord()}
