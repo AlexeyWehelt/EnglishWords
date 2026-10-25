@@ -159,7 +159,7 @@ tr:last-child td{border-bottom:0}
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 5</p>
+    <p class="intro" style="font-size:.75rem">версия 6</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -671,7 +671,7 @@ function speak(t){try{const u=new SpeechSynthesisUtterance(t);u.lang='en-US';u.r
 function hush(){try{speechSynthesis.cancel()}catch(e){}}
 const Rec=window.SpeechRecognition||window.webkitSpeechRecognition;
 let rec=null;
-function stopRec(){if(rec){const r=rec;rec=null;r.cancelled=true;try{r.abort()}catch(e){}}}
+function stopRec(){clearTimeout(listenTimer);if(rec){const r=rec;rec=null;r.cancelled=true;try{r.abort()}catch(e){}}}
 
 /* ---------- The cycle ---------- */
 let cur=null, phase='start', speakTimer=null, shownAt=0, firstAt=0;
@@ -715,34 +715,51 @@ function nextWord(){
   speakTimer=setTimeout(()=>{if(phase==='ask'&&!rec)speak(cur.en)},SPEAK_DELAY);
 }
 function setStatus(t,err){const s=$('status');if(s){s.textContent=t;s.classList.toggle('err',!!err)}}
+let listenTimer=null;
 function toggleMic(){
   if(phase!=='ask') return;
-  if(rec){stopRec();setStatus('');return}
+  if(rec){stopRec();resetMic();setStatus('');return}
   if(!Rec){setStatus('Этот браузер не распознаёт речь. Откройте страницу в Chrome, Edge или Safari, либо напишите ответ.',true);return}
   hush(); clearTimeout(speakTimer);
-  const inp=$('ans'), btn=$('micBtn'); inp.value=''; inp.placeholder='Слушаю…';
+  const inp=$('ans'), btn=$('micBtn'); inp.value='';
   const r=new Rec(); rec=r;
-  r.lang='ru-RU'; r.interimResults=true; r.maxAlternatives=5; r.continuous=false;
-  let alts=null;
-  r.onstart=()=>{btn.classList.add('listening');$('micLbl').textContent='Слушаю';setStatus('Говорите перевод')};
-  r.onspeechstart=()=>{if(!firstAt)firstAt=Date.now()};
-  r.onresult=e=>{if(r.cancelled)return;if(!firstAt)firstAt=Date.now();const res=e.results[e.results.length-1];inp.value=res[0].transcript.trim();
-    if(res.isFinal) alts=Array.from(res).map(a=>a.transcript.trim()).filter(Boolean)};
-  r.onerror=e=>{if(r.cancelled)return;
+  // continuous mode keeps listening through a short pause, so a single short word is not cut off
+  r.lang='ru-RU'; r.interimResults=true; r.maxAlternatives=5; r.continuous=true;
+  const live=()=>rec===r&&!r.cancelled&&phase==='ask'&&$('micBtn')===btn;
+  let alts=null, heard='';
+  btn.classList.add('listening'); $('micLbl').textContent='Подождите'; inp.placeholder='Включаю микрофон…';
+  r.onaudiostart=()=>{if(!live())return;$('micLbl').textContent='Слушаю';inp.placeholder='Слушаю…';
+    setStatus('Говорите. Короткое слово лучше сказать фразой: «предлог в», «союз и».')};
+  r.onspeechstart=()=>{if(live()&&!firstAt)firstAt=Date.now()};
+  r.onresult=e=>{
+    if(!live())return; if(!firstAt)firstAt=Date.now();
+    let txt='';for(let i=e.resultIndex;i<e.results.length;i++)txt+=e.results[i][0].transcript;
+    heard=(heard+' '+txt).trim(); inp.value=txt.trim()||heard;
+    const res=e.results[e.results.length-1];
+    if(res.isFinal){
+      alts=Array.from(res).map(a=>a.transcript.trim()).filter(Boolean);
+      if(alts.length){const a2=alts.slice();stopRec();resetMic();process(a2,a2[0])}   // answer as soon as a phrase is final
+    }
+  };
+  r.onerror=e=>{if(!live())return;
     const m={'not-allowed':'Нет доступа к микрофону. Разрешите его в настройках браузера или напишите ответ.',
       'service-not-allowed':'Распознавание речи недоступно. Разрешите микрофон или напишите ответ.',
-      'no-speech':'Ничего не услышал. Нажмите микрофон и скажите ещё раз. Короткие слова вроде «о» или «и» лучше произносить чётко и протяжно или написать.',
+      'no-speech':'Ничего не услышал. Нажмите микрофон и скажите ещё раз. Короткое слово скажите фразой, например «предлог о», или напишите его.',
       'audio-capture':'Микрофон не найден.','network':'Нет связи с сервисом распознавания речи.'}[e.error];
     if(m) setStatus(m,true)};
   r.onend=()=>{
-    if(rec===r) rec=null;
-    const b=$('micBtn'); if(b){b.classList.remove('listening');$('micLbl').textContent='Сказать'}
-    if(r.cancelled||phase!=='ask') return;
-    inp.placeholder='Перевод по-русски';
-    if(alts&&alts.length) process(alts,alts[0]);
-    else if(inp.value.trim()) process([inp.value.trim()],inp.value.trim());
+    const wasLive=live(); if(rec===r) rec=null; clearTimeout(listenTimer); resetMic();
+    if(!wasLive) return;
+    const v=inp.value.trim(); if(v) process([v],v);
   };
-  try{r.start()}catch(e){rec=null;setStatus('Не удалось включить микрофон.',true)}
+  clearTimeout(listenTimer);
+  listenTimer=setTimeout(()=>{if(rec===r){try{r.stop()}catch(e){}}},8000);   // never keep the microphone open longer than 8 s
+  try{r.start()}catch(e){rec=null;resetMic();setStatus('Не удалось включить микрофон.',true)}
+}
+function resetMic(){
+  clearTimeout(listenTimer);
+  const b=$('micBtn'); if(b){b.classList.remove('listening');$('micLbl').textContent='Сказать'}
+  const i=$('ans'); if(i) i.placeholder='Перевод по-русски';
 }
 function process(answers,shown,idk){
   if(phase!=='ask') return; phase='result'; stopRec(); hush(); clearTimeout(speakTimer);
