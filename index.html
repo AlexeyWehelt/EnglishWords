@@ -100,6 +100,28 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
 .item .w b{font-family:var(--f-word)}
 .item .w span{display:block;color:var(--muted);font-size:.84rem;overflow-wrap:anywhere}
 .item .r{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.actions{display:flex;align-items:center;gap:22px;justify-content:center;flex-wrap:wrap}
+.btn.plain{background:var(--surface);color:var(--ink);border-color:var(--line)}
+.btn.plain:hover{border-color:var(--muted)}
+.meter{display:inline-block;position:relative;width:64px;height:8px;border-radius:4px;background:var(--line);vertical-align:middle}
+.meter::after{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--muted)}
+.meter i{position:absolute;top:0;bottom:0;border-radius:4px}
+.meter i.pos{background:var(--ok)} .meter i.neg{background:var(--bad)}
+.rnum{font-variant-numeric:tabular-nums;font-weight:600;min-width:2.6em;display:inline-block;text-align:right;color:var(--muted)}
+.rnum.good{color:var(--ok)} .rnum.bad{color:var(--bad)}
+.rating{display:inline-flex;align-items:center;gap:6px}
+.delta{font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.hint{font-size:.85rem;color:var(--muted);margin:0}
+.sum .r b{color:var(--bad)}
+.practice{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border:1px dashed var(--warn);background:var(--surface);color:var(--ink);border-radius:10px;padding:10px 14px;font-size:.88rem}
+.practice b{color:var(--warn)}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{font-size:.75rem;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:500}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:0}
 .empty{color:var(--muted);text-align:center;padding:18px 0;margin:0}
 @media (max-width:460px){.sum{grid-template-columns:repeat(2,minmax(0,1fr))}.menu .who{margin-left:0;width:100%;padding:4px 8px}}
 @media (prefers-reduced-motion:no-preference){
@@ -123,8 +145,10 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
   <nav class="menu" id="menu" hidden>
     <button class="tab" id="tab-train" type="button" aria-current="true">Тренировка</button>
     <button class="tab" id="tab-stats" type="button" aria-current="false">Усваиваемость</button>
+    <button class="tab" id="tab-lessons" type="button" aria-current="false">Занятия</button>
     <span class="who"><b id="whoName"></b><button class="linkish" id="logout" type="button">Выйти</button></span>
   </nav>
+  <div class="practice" id="practiceBar" role="status" hidden><span><b>Режим без статистики.</b> Ответы не меняют рейтинг слов и не записываются в занятия. Чтобы выйти, нажмите N дважды.</span><button class="linkish" id="practiceOff" type="button">Выйти из режима</button></div>
 
   <main class="card" id="view-login">
     <h2>Вход</h2>
@@ -135,10 +159,11 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 4</p>
+    <p class="intro" style="font-size:.75rem">версия 5</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
+  <main class="panel" id="view-lessons" hidden></main>
 </div>
 
 <script>
@@ -380,7 +405,12 @@ woman|The woman is my teacher.|Эта женщина — моя учительн
 const EXAMPLES={};
 EXAMPLES_SRC.split('\n').forEach(l=>{const [w,en,ru]=l.split('|');if(w&&en&&ru)EXAMPLES[w.trim()]={en:en.trim(),ru:ru.trim()}});
 const SEED_ACCOUNTS = ['юра'];        // these new accounts start with the base word set; others start empty
-const LEARNED = 4, MAXR = 5;          // rating 0..5; a word counts as learned from 4
+/* Rating: a new word is 0 (neutral). A right answer adds up to +1 (less the longer the pause before answering),
+   a wrong answer or "Не знаю" takes 1 away. The scale runs from -5 to +5; from +3 a word counts as learned. */
+const RMIN = -5, RMAX = 5, LEARNED = 3;
+const FAST = 3, SLOW = 15;            // seconds: answered within FAST -> full +1; after SLOW -> only +0.1
+const PENALTY = 1;
+const SESSION_GAP = 30*60*1000;       // a pause longer than this starts a new lesson in "Занятия"
 const SPEAK_DELAY = 500;              // ms between showing the word and saying it
 
 /* ---------- Accounts: same scheme as the maze game (name + 4 digits, Firebase) ---------- */
@@ -407,22 +437,26 @@ function makeFirebase(cfg){
       const u=res.snapshot.val(); if(!u||u.h!==h) return {ok:false};
       return {ok:true,name:u.name||name};
     },
-    watch(key,fn){off&&off();const r=db.ref(ROOT+key+'/words');const cb=s=>fn(s.val()||{});r.on('value',cb);off=()=>r.off('value',cb)},
+    watch(key,fn){off&&off();const r=db.ref(ROOT+key);const cb=s=>fn(s.val()||{});r.on('value',cb);off=()=>r.off('value',cb)},
     unwatch(){off&&off();off=null},
-    save(key,k,w){return db.ref(ROOT+key+'/words/'+k).set(w)}
+    save(key,k,w){return db.ref(ROOT+key+'/words/'+k).set(w)},
+    saveSession(key,id,s){return db.ref(ROOT+key+'/sessions/'+id).set(s)}
   };
 }
 /* same-browser backend for testing: add #local to the address */
 function makeLocal(){
   const LS='en-trainer-users', get=()=>{try{return JSON.parse(localStorage.getItem(LS))||{}}catch(e){return{}}}, put=u=>{try{localStorage.setItem(LS,JSON.stringify(u))}catch(e){}};
   let fn=null,me=null;
-  addEventListener('storage',e=>{if(e.key===LS&&fn&&me)fn((get()[me]||{}).words||{})});
+  const emit=()=>{if(fn&&me)fn(get()[me]||{})};
+  addEventListener('storage',e=>{if(e.key===LS)emit()});
+  const setAt=(key,sect,id,v)=>{const u=get();if(u[key]){(u[key][sect]=u[key][sect]||{})[id]=v;put(u);setTimeout(emit,0)}};
   return {
     async login(key,name,h){const u=get();if(!u[key]){u[key]={name,h,c:Date.now(),words:SEED_ACCOUNTS.includes(key)?baseWords():{}};put(u)}
       return u[key].h===h?{ok:true,name:u[key].name}:{ok:false}},
-    watch(key,f){me=key;fn=f;f((get()[key]||{}).words||{})},
+    watch(key,f){me=key;fn=f;emit()},
     unwatch(){fn=null;me=null},
-    async save(key,k,w){const u=get();if(u[key]){(u[key].words=u[key].words||{})[k]=w;put(u)}}
+    async save(key,k,w){setAt(key,'words',k,w)},
+    async saveSession(key,id,s){setAt(key,'sessions',id,s)}
   };
 }
 const loadScript=src=>new Promise((ok,no)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=no;document.head.appendChild(s)});
@@ -438,7 +472,7 @@ const backendReady=(async()=>{
   return null;
 })();
 
-let B=null, me=null, myName='', words=[];   // words: [{k,en,ru,r,seen,ok,last}]
+let B=null, me=null, myName='', words=[], sessions=[];
 
 /* ---------- Login ---------- */
 const $=id=>document.getElementById(id);
@@ -466,36 +500,70 @@ $('loginForm').onsubmit=async e=>{
       :'Не получилось связаться с сервером. Проверьте интернет и попробуйте ещё раз.'+(detail?' ('+detail+')':'')}
   finally{logging=false;$('loginBtn').disabled=false}
 };
+const num=v=>{const n=Number(v);return isFinite(n)?n:0};
 function enter(){
   $('view-login').hidden=true; $('menu').hidden=false; $('lamp').hidden=false; $('bar').hidden=false;
-  $('whoName').textContent=myName;
+  $('whoName').textContent=myName; sess=null; sessStart=null;
   let first=true;
-  B.watch(me,map=>{
-    words=Object.entries(map).filter(([k,w])=>w&&w.en&&Array.isArray(w.ru)&&w.ru.length).map(([k,w])=>({k,en:w.en,ru:w.ru,r:w.r|0,seen:w.seen|0,ok:w.ok|0,last:w.last||0}));
-    if(cur) cur=words.find(w=>w.k===cur.k)||null;
+  B.watch(me,u=>{
+    const map=u.words||{};
+    words=Object.entries(map).filter(([k,w])=>w&&w.en&&Array.isArray(w.ru)&&w.ru.length)
+      .map(([k,w])=>({...w,k,r:num(w.r),seen:num(w.seen),ok:num(w.ok),t:num(w.t),last:num(w.last)}));
+    sessions=Object.entries(u.sessions||{}).map(([id,s])=>({id,start:num(s.start),end:num(s.end),n:num(s.n),ok:num(s.ok)})).filter(s=>s.start);
+    if(cur) cur=words.find(w=>w.k===cur.k)||cur;
     progress();
     if(first){first=false;show('train')}
     else if(view==='stats') renderStats();
+    else if(view==='lessons') renderLessons();
     else if(phase==='start'||phase==='empty') renderStart();
   });
 }
 $('logout').onclick=()=>{
-  stopRec();hush();clearTimeout(speakTimer);B&&B.unwatch();me=null;words=[];cur=null;phase='start';
-  ['menu','lamp','bar','view-train','view-stats'].forEach(id=>$(id).hidden=true);$('view-login').hidden=false;$('lcode').focus();
+  stopRec();hush();clearTimeout(speakTimer);B&&B.unwatch();me=null;words=[];sessions=[];cur=null;phase='start';
+  ['menu','lamp','bar','view-train','view-stats','view-lessons'].forEach(id=>$(id).hidden=true);$('view-login').hidden=false;$('lcode').focus();
 };
 
 /* ---------- Menu ---------- */
 let view='train';
+const VIEWS=['train','stats','lessons'];
 function show(v){
-  view=v; $('view-train').hidden=v!=='train'; $('view-stats').hidden=v!=='stats';
-  $('tab-train').setAttribute('aria-current',v==='train'); $('tab-stats').setAttribute('aria-current',v==='stats');
-  if(v==='stats'){stopRec();hush();renderStats()}
-  else if(phase==='ask'||phase==='result'||phase==='checking'){} else renderStart();
+  view=v; VIEWS.forEach(n=>{$('view-'+n).hidden=n!==v;$('tab-'+n).setAttribute('aria-current',n===v)});
+  if(v!=='train'){stopRec();hush()}
+  if(v==='stats') renderStats();
+  else if(v==='lessons') renderLessons();
+  else if(!(phase==='ask'||phase==='result')) renderStart();
 }
-$('tab-train').onclick=()=>show('train');
-$('tab-stats').onclick=()=>show('stats');
+VIEWS.forEach(n=>$('tab-'+n).onclick=()=>show(n));
 
-/* ---------- Progress ---------- */
+/* ---------- Practice mode: press N twice; answers don't change ratings or lessons ---------- */
+let practice=false, lastN=0, beforeN=null;
+function setPractice(on){
+  practice=on; $('practiceBar').hidden=!on;
+  const m=$('meta'); if(m&&cur&&phase==='ask') m.innerHTML=metaHTML(cur);
+}
+document.addEventListener('keydown',e=>{
+  if(e.code!=='KeyN'||e.ctrlKey||e.metaKey||e.altKey||!me) return;
+  const inp=e.target&&e.target.id==='ans'?e.target:null, now=Date.now();
+  if(now-lastN<450){
+    e.preventDefault(); if(inp&&beforeN!==null) inp.value=beforeN;   // drop the letter typed by the first press
+    lastN=0; beforeN=null; setPractice(!practice);
+  } else { lastN=now; beforeN=inp?inp.value:null; }
+},true);
+$('practiceOff').onclick=()=>setPractice(false);
+
+/* ---------- Rating helpers ---------- */
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+const round2=v=>Math.round(v*100)/100;
+function speedFactor(sec){ if(sec<=FAST) return 1; if(sec>=SLOW) return .1; return 1-.9*(sec-FAST)/(SLOW-FAST); }
+const fmtR=r=>(r>0?'+':r<0?'−':'')+Math.abs(r).toFixed(1).replace('.',',');
+const fmtSec=s=>s.toFixed(1).replace('.',',')+' с';
+function meter(r){
+  const w=Math.abs(r)/RMAX*50;
+  return `<span class="rating"><span class="meter" title="Рейтинг ${fmtR(r)} (от −5 до +5)"><i class="${r>=0?'pos':'neg'}" style="${r>=0?'left:50%':'right:50%'};width:${w}%"></i></span><span class="rnum ${r>=LEARNED?'good':r<0?'bad':''}">${fmtR(r)}</span></span>`;
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- Progress lamp ---------- */
 function progress(){
   const n=words.length, learned=words.filter(w=>w.r>=LEARNED).length, pct=n?Math.round(learned/n*100):0;
   $('lamp').dataset.state=!n?'off':learned===n?'green':learned>0?'amber':'off';
@@ -503,30 +571,59 @@ function progress(){
   $('lampSub').textContent=n?`${learned} из ${n} слов усвоено`:'слов пока нет';
   $('barFill').style.width=pct+'%';
 }
-const dots=r=>`<span class="dots" title="Рейтинг ${r} из ${MAXR}">${Array.from({length:MAXR},(_,i)=>`<i class="${i<r?'on':''}"></i>`).join('')}</span>`;
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- Усваиваемость ---------- */
 let filter='all';
 function renderStats(){
-  const n=words.length, learned=words.filter(w=>w.r>=LEARNED), mid=words.filter(w=>w.seen&&w.r<LEARNED), fresh=words.filter(w=>!w.seen);
+  const n=words.length;
+  const groups={all:words,learned:words.filter(w=>w.r>=LEARNED),mid:words.filter(w=>w.seen&&w.r>=0&&w.r<LEARNED),
+    hard:words.filter(w=>w.r<0),fresh:words.filter(w=>!w.seen)};
   const seen=words.reduce((s,w)=>s+w.seen,0), ok=words.reduce((s,w)=>s+w.ok,0);
-  const groups={all:words,learned,mid,fresh};
+  const timed=words.filter(w=>w.t>0), avgT=timed.length?timed.reduce((s,w)=>s+w.t,0)/timed.length:0;
   const list=groups[filter].slice().sort((a,b)=>a.r-b.r||b.seen-a.seen||a.en.localeCompare(b.en));
   $('view-stats').innerHTML=`<h2>Усваиваемость слов</h2>
-    <div class="sum"><div class="g"><b>${learned.length}</b><span>усвоено</span></div><div class="y"><b>${mid.length}</b><span>в процессе</span></div>
-      <div><b>${fresh.length}</b><span>ещё не было</span></div><div><b>${seen?Math.round(ok/seen*100)+'%':'—'}</b><span>верных ответов</span></div></div>
-    <div class="filters">${[['all','Все',n],['mid','В процессе',mid.length],['learned','Усвоено',learned.length],['fresh','Ещё не было',fresh.length]]
+    <div class="sum"><div class="g"><b>${groups.learned.length}</b><span>усвоено (от +3)</span></div><div class="y"><b>${groups.mid.length}</b><span>в процессе</span></div>
+      <div class="r"><b>${groups.hard.length}</b><span>трудные (ниже 0)</span></div><div><b>${groups.fresh.length}</b><span>ещё не было</span></div></div>
+    <p class="hint">Верных ответов: ${seen?Math.round(ok/seen*100)+'%':'—'}${avgT?` · среднее время верного ответа ${fmtSec(avgT)}`:''}</p>
+    <div class="filters">${[['all','Все',n],['hard','Трудные',groups.hard.length],['mid','В процессе',groups.mid.length],['learned','Усвоено',groups.learned.length],['fresh','Ещё не было',groups.fresh.length]]
       .map(([k,t,c])=>`<button class="chip" type="button" data-f="${k}" aria-pressed="${filter===k}">${t} · ${c}</button>`).join('')}</div>
     <div class="list">${list.length?list.map(w=>`<div class="item"><div class="w"><b lang="en">${esc(w.en)}</b><span>${esc(w.ru.join('; '))}</span></div>
-      <div class="r">${dots(w.r)}<span>${w.seen?`верно ${w.ok} из ${w.seen}`:'не встречалось'}</span></div></div>`).join(''):
+      <div class="r">${meter(w.r)}<span>${w.seen?`верно ${w.ok} из ${w.seen}${w.t?' · '+fmtSec(w.t):''}`:'не встречалось'}</span></div></div>`).join(''):
       `<p class="empty">${n?'В этой группе слов нет.':'В словаре пока нет слов.'}</p>`}</div>`;
   document.querySelectorAll('[data-f]').forEach(b=>b.onclick=()=>{filter=b.dataset.f;renderStats()});
+}
+
+/* ---------- Занятия ---------- */
+const DF=new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long',year:'numeric'}), TF=new Intl.DateTimeFormat('ru-RU',{hour:'2-digit',minute:'2-digit'});
+function dur(ms){const m=Math.max(1,Math.round(ms/60000));return m<60?m+' мин':Math.floor(m/60)+' ч '+(m%60)+' мин'}
+function renderLessons(){
+  const list=sessions.slice().sort((a,b)=>b.start-a.start);
+  const total=list.reduce((s,x)=>s+x.n,0), ok=list.reduce((s,x)=>s+x.ok,0), time=list.reduce((s,x)=>s+Math.max(0,x.end-x.start),0);
+  const week=Date.now()-7*864e5, wk=list.filter(x=>x.start>=week);
+  $('view-lessons').innerHTML=`<h2>Статистика занятий</h2>
+    <div class="sum"><div><b>${list.length}</b><span>занятий</span></div><div><b>${total}</b><span>слов отработано</span></div>
+      <div class="g"><b>${total?Math.round(ok/total*100)+'%':'—'}</b><span>верных ответов</span></div><div><b>${wk.length}</b><span>занятий за 7 дней</span></div></div>
+    ${list.length?`<p class="hint">Всего времени: ${dur(time)}. Новое занятие начинается после нажатия «Начать» или после перерыва больше 30 минут.</p>
+    <div class="tablewrap"><table><thead><tr><th>Дата</th><th>Начало</th><th>Длительность</th><th class="n">Слов</th><th class="n">Верно</th></tr></thead><tbody>
+    ${list.map(x=>`<tr><td>${DF.format(x.start)}</td><td>${TF.format(x.start)}</td><td>${dur(x.end-x.start)}</td><td class="n">${x.n}</td><td class="n">${x.n?Math.round(x.ok/x.n*100)+'%':'—'}</td></tr>`).join('')}
+    </tbody></table></div>`:`<p class="empty">Занятий пока не было. Они появятся здесь после первых ответов на вкладке «Тренировка».</p>`}`;
+}
+let sess=null, sessStart=null;   // current lesson; sessStart is set by "Начать"
+function logAnswer(ok){
+  const now=Date.now();
+  if(!sess||sessStart||now-sess.end>SESSION_GAP){
+    const start=sessStart||now; sessStart=null;
+    sess={id:String(start),start,end:now,n:0,ok:0};
+  }
+  sess.n++; if(ok) sess.ok++; sess.end=now;
+  const {id,...data}=sess; B.saveSession(me,id,data).catch(()=>{});
 }
 
 /* ---------- Picking the next word ---------- */
 let recent=[];
 function pick(){
   let cand=words.filter(w=>!recent.includes(w.k)); if(!cand.length) cand=words;
-  const wt=w=>Math.pow(MAXR+1-w.r,2);           // low rating -> shown much more often
+  const wt=w=>Math.pow(2,(LEARNED-w.r)/1.5);    // -5 -> ~40x, 0 -> 4x, +3 -> 1x, +5 -> 0.4x
   let x=Math.random()*cand.reduce((s,w)=>s+wt(w),0);
   for(const w of cand){x-=wt(w);if(x<=0)return w}
   return cand[cand.length-1];
@@ -577,9 +674,10 @@ let rec=null;
 function stopRec(){if(rec){const r=rec;rec=null;r.cancelled=true;try{r.abort()}catch(e){}}}
 
 /* ---------- The cycle ---------- */
-let cur=null, phase='start', speakTimer=null;
+let cur=null, phase='start', speakTimer=null, shownAt=0, firstAt=0;
 const card=$('view-train');
 const MIC=`<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>`;
+const metaHTML=w=>`${meter(w.r)}<span>${w.seen?'показано '+w.seen+' раз':'новое слово'}</span>`;
 
 function renderStart(){
   if(!words.length){
@@ -589,26 +687,31 @@ function renderStart(){
   }
   phase='start';
   card.innerHTML=`<div class="meta">${words.length} слов в словаре</div>
-    <p class="intro">Программа покажет и произнесёт английское слово. Скажите перевод по-русски в микрофон или напишите его в поле и нажмите Enter.</p>
+    <p class="intro">Программа покажет и произнесёт английское слово. Скажите перевод по-русски в микрофон или напишите его в поле и нажмите Enter. Чем быстрее верный ответ, тем больше растёт рейтинг слова.</p>
     <button class="btn big" id="startBtn" type="button">Начать</button>`;
-  $('startBtn').onclick=nextWord; $('startBtn').focus();
+  $('startBtn').onclick=()=>{sessStart=Date.now();nextWord()}; $('startBtn').focus();
 }
 function nextWord(){
   stopRec(); hush(); clearTimeout(speakTimer);
   if(!words.length){renderStart();return}
   cur=pick(); recent.push(cur.k); while(recent.length>Math.min(4,words.length-1)) recent.shift();
-  phase='ask';
-  card.innerHTML=`<div class="meta" id="meta">${dots(cur.r)}<span>${cur.seen?'показано '+cur.seen+' раз':'новое слово'}</span></div>
+  phase='ask'; firstAt=0;
+  card.innerHTML=`<div class="meta" id="meta">${metaHTML(cur)}</div>
     <button class="word" id="word" type="button" lang="en" title="Нажмите, чтобы услышать ещё раз">${esc(cur.en)}</button>
     <form class="field" id="form"><input id="ans" lang="ru" autocomplete="off" placeholder="Перевод по-русски" aria-label="Ваш ответ"><button class="btn" type="submit">Ввод</button></form>
-    <button class="mic" id="micBtn" type="button"><span class="ring">${MIC}</span><span id="micLbl">Сказать</span></button>
+    <div class="actions">
+      <button class="mic" id="micBtn" type="button"><span class="ring">${MIC}</span><span id="micLbl">Сказать</span></button>
+      <button class="btn plain" id="idkBtn" type="button">Не знаю</button>
+    </div>
     <p class="status" id="status"></p>`;
   $('word').onclick=()=>speak(cur.en);
   $('micBtn').onclick=toggleMic;
-  $('ans').oninput=()=>{if(rec){stopRec();setStatus('')}};
+  $('idkBtn').onclick=()=>{if(phase==='ask')process([],'',true)};
+  $('ans').oninput=()=>{if(!firstAt)firstAt=Date.now();if(rec){stopRec();setStatus('')}};
   $('form').onsubmit=e=>{e.preventDefault();const v=$('ans').value.trim();
-    if(!v){setStatus('Введите перевод или нажмите микрофон');$('ans').focus();return}process([v],v)};
+    if(!v){setStatus('Введите перевод, нажмите микрофон или «Не знаю»');$('ans').focus();return}process([v],v)};
   if(matchMedia('(pointer:fine)').matches) $('ans').focus();   // on phones don't pop the keyboard over the word
+  shownAt=Date.now();
   speakTimer=setTimeout(()=>{if(phase==='ask'&&!rec)speak(cur.en)},SPEAK_DELAY);
 }
 function setStatus(t,err){const s=$('status');if(s){s.textContent=t;s.classList.toggle('err',!!err)}}
@@ -622,7 +725,8 @@ function toggleMic(){
   r.lang='ru-RU'; r.interimResults=true; r.maxAlternatives=5; r.continuous=false;
   let alts=null;
   r.onstart=()=>{btn.classList.add('listening');$('micLbl').textContent='Слушаю';setStatus('Говорите перевод')};
-  r.onresult=e=>{if(r.cancelled)return;const res=e.results[e.results.length-1];inp.value=res[0].transcript.trim();
+  r.onspeechstart=()=>{if(!firstAt)firstAt=Date.now()};
+  r.onresult=e=>{if(r.cancelled)return;if(!firstAt)firstAt=Date.now();const res=e.results[e.results.length-1];inp.value=res[0].transcript.trim();
     if(res.isFinal) alts=Array.from(res).map(a=>a.transcript.trim()).filter(Boolean)};
   r.onerror=e=>{if(r.cancelled)return;
     const m={'not-allowed':'Нет доступа к микрофону. Разрешите его в настройках браузера или напишите ответ.',
@@ -640,20 +744,33 @@ function toggleMic(){
   };
   try{r.start()}catch(e){rec=null;setStatus('Не удалось включить микрофон.',true)}
 }
-function process(answers,shown){
-  if(phase!=='ask') return; phase='result'; stopRec(); hush();
-  const ok=isCorrect(answers,cur);
-  if(ok){cur.r=Math.min(MAXR,cur.r+1);cur.ok++}else cur.r=Math.max(0,cur.r-2);
-  cur.seen++; cur.last=Date.now();
-  const {k,...data}=cur;
-  B.save(me,k,data).catch(()=>{const s=$('saveErr');if(s)s.hidden=false});
-  progress();
-  $('meta').innerHTML=`${dots(cur.r)}<span>показано ${cur.seen} раз</span>`;
-  $('form').remove(); $('micBtn').remove(); $('status').remove();
+function process(answers,shown,idk){
+  if(phase!=='ask') return; phase='result'; stopRec(); hush(); clearTimeout(speakTimer);
+  const ok=!idk&&isCorrect(answers,cur);
+  const sec=Math.max(0,((firstAt||Date.now())-shownAt)/1000);
+  let note='';
+  if(practice){ note='Режим без статистики: рейтинг не изменён'; }
+  else{
+    const before=cur.r;
+    if(ok){
+      cur.r=round2(clamp(cur.r+speedFactor(sec),RMIN,RMAX)); cur.ok++;
+      cur.t=round2(cur.t?cur.t*.7+sec*.3:sec);
+    } else cur.r=round2(clamp(cur.r-PENALTY,RMIN,RMAX));
+    cur.seen++; cur.last=Date.now();
+    const d=round2(cur.r-before);
+    note=`Рейтинг ${d>=0?'+':'−'}${Math.abs(d).toFixed(1).replace('.',',')} → ${fmtR(cur.r)}`+(ok?` · ответ через ${fmtSec(sec)}`:'');
+    const {k,...data}=cur;
+    B.save(me,k,data).catch(()=>{const s=$('saveErr');if(s)s.hidden=false});
+    logAnswer(ok);
+    progress();
+  }
+  $('meta').innerHTML=practice?metaHTML(cur):`${meter(cur.r)}<span>показано ${cur.seen} раз</span>`;
+  $('form').remove(); document.querySelector('.actions').remove(); $('status').remove();
   const exm=!ok&&(cur.ex&&cur.ex.en?cur.ex:EXAMPLES[cur.en]);
-  card.insertAdjacentHTML('beforeend',`<div class="verdict ${ok?'ok':'bad'}"><b>${ok?'Правильно':'Неправильно'}</b>
-      <div class="meanings">${cur.ru.map(esc).join('; ')}</div><span class="your">Ваш ответ: ${esc(shown)}</span>
-      ${exm?`<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" lang="en">${esc(exm.en)}</span><span class="ex-ru">${esc(exm.ru)}</span></button>`:''}</div>
+  card.insertAdjacentHTML('beforeend',`<div class="verdict ${ok?'ok':'bad'}"><b>${ok?'Правильно':idk?'Запомните':'Неправильно'}</b>
+      <div class="meanings">${cur.ru.map(esc).join('; ')}</div>${idk?'':`<span class="your">Ваш ответ: ${esc(shown)}</span>`}
+      ${exm?`<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" lang="en">${esc(exm.en)}</span><span class="ex-ru">${esc(exm.ru)}</span></button>`:''}
+      <span class="delta">${note}</span></div>
     <button class="btn big" id="nextBtn" type="button">Далее</button>
     <p class="status err" id="saveErr" hidden>Результат не сохранился: нет связи с сервером.</p>`);
   const nb=$('nextBtn'); nb.onclick=nextWord; nb.focus();
