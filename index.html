@@ -194,7 +194,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 14</p>
+    <p class="intro" style="font-size:.75rem">версия 15</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -725,7 +725,28 @@ $('practiceOff').onclick=()=>setPractice(false);
 /* ---------- Rating helpers ---------- */
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 const round2=v=>Math.round(v*100)/100;
-function speedFactor(sec){ if(sec<=FAST) return 1; if(sec>=SLOW) return .1; return 1-.9*(sec-FAST)/(SLOW-FAST); }
+/* How much a right answer adds, by the time from showing the word to the start of the answer.
+   Measured on a learner who knows the words well (27.10.2026, 48 voice answers): the answer starts 2.2 s after the word
+   appears (90% within 2.7 s); most of it is mechanics: the word is spoken at 0.7 s, the microphone is pressed at 1.4 s,
+   speaking starts 0.8 s later. So:
+     up to baseline + 0.6 s  -> the word is known automatically: +1.5
+     up to baseline + 2 s    -> +1
+     then down to +0.1 at baseline + 12 s.
+   The baseline is the learner's own median on words already answered right at least twice (from 15 such answers on),
+   kept between 1.6 and 3 s; until then 2.2 s for voice and 2.6 s for typing. */
+const BASE_T={voice:2200,text:2600};
+function baselineMs(mode){
+  const m=mode==='text'?'text':'voice';
+  const a=answerLog.filter(e=>e.m===m&&e.ok&&!e.p&&e.t>0&&(e.r0||0)>=2).slice(-40).map(e=>e.t);
+  return a.length>=15?clamp(median(a),1600,3000):BASE_T[m];
+}
+function speedFactor(sec,mode){
+  const b=baselineMs(mode)/1000;
+  if(sec<=b+.6) return 1.5;
+  if(sec<=b+2) return 1;
+  if(sec>=b+12) return .1;
+  return 1-.9*(sec-b-2)/10;
+}
 const fmtR=r=>(r>0?'+':r<0?'−':'')+Math.abs(r).toFixed(1).replace('.',',');
 const fmtSec=s=>s.toFixed(1).replace('.',',')+' с';
 function meter(r){
@@ -834,7 +855,7 @@ function speedHTML(){
     return `<tr><td>${name}</td><td class="n">${ok.length}</td><td class="n">${fmtMs(median(ok.map(e=>e.t)))}</td><td class="n">${fmtMs(median(fromEnd))}</td><td class="n">${fmtMs(median(ok.map(e=>e.done)))}</td></tr>`;
   }).join('');
   return `<h2>Скорость ответа</h2>
-    <p class="hint">Медиана по верным ответам: сколько прошло от появления слова (и от конца его произношения) до начала ответа, и до того, как ответ засчитан.</p>
+    <p class="hint">Медиана по верным ответам: сколько прошло от появления слова (и от конца его произношения) до начала ответа, и до того, как ответ засчитан. Ответ, начатый не позже ${fmtMs(baselineMs('voice')+600)} голосом или ${fmtMs(baselineMs('text')+600)} текстом, считается быстрым и даёт +1,5.</p>
     <div class="tablewrap"><table><thead><tr><th>Ответ</th><th class="n">Верных</th><th class="n">До начала ответа</th><th class="n">После произношения</th><th class="n">До результата</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="row"><button class="btn plain" id="logCopy" type="button">Скопировать журнал ответов (${answerLog.length})</button></div>
     <textarea id="logText" readonly hidden></textarea>`;
@@ -1275,10 +1296,23 @@ function lev(a,b){const d=Array.from({length:a.length+1},(_,i)=>[i]);for(let j=1
   for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[a.length][b.length]}
 const ENDS=/(ться|тся|ешь|ете|ишь|ите|ого|его|ому|ему|ыми|ими|ть|ти|ет|ем|ит|им|ут|ют|ат|ят|ый|ий|ой|ая|яя|ое|ее|ые|ие|ую|юю|ю|у|а|я|ы|и|о|е|ь)$/;
 const stem=s=>s.length>3?s.replace(ENDS,''):s;
+const PREF=/^(пере|раз|рас|под|над|при|про|вы|вз|вс|до|за|из|ис|на|об|от|по|с|у|о)/;
 function close(a,b){
+  if(a.length>=5&&b.length>=5&&a!==b){ const pa=a.replace(PREF,''), pb=b.replace(PREF,'');
+    if((pa===b||pb===a)&&Math.min(pa.length,pb.length)>=4) return true; }
+  return close0(a,b);
+}
+function close0(a,b){
   if(a===b) return true;
   if(Math.min(a.length,b.length)<4) return false;
-  if(lev(a,b)<=1) return true;
+  // one wrong letter is a typo only in longer words: петь and пить are different words
+  if(lev(a,b)<=1&&Math.min(a.length,b.length)>=6) return true;
+  // verb pairs like отправить / отправлять, послать / посылать
+  if(/ть(ся)?$/.test(a)&&/ть(ся)?$/.test(b)&&Math.min(a.length,b.length)>=6){
+    let q=0;while(q<a.length&&q<b.length&&a[q]===b[q])q++;
+    if(q>=5&&Math.abs(a.length-b.length)<=3) return true;
+    if(lev(a,b)<=2&&a.slice(0,3)===b.slice(0,3)) return true;
+  }
   const sa=stem(a),sb=stem(b); if(sa.length>=2&&sa===sb) return true;
   let p=0;while(p<a.length&&p<b.length&&a[p]===b[p])p++;
   return p>=Math.max(4,Math.min(a.length,b.length)-2)&&Math.abs(a.length-b.length)<=3;
@@ -1581,7 +1615,7 @@ function renderStart(){
   phase='start';
   const arch=archived().length;
   card.innerHTML=`<div class="meta">${active().length} слов в тренировке${arch?' · '+arch+' в архиве':''}</div>
-    <p class="intro">Программа покажет и произнесёт английское слово. Скажите перевод по-русски в микрофон или напишите его в поле и нажмите Enter. Чем быстрее верный ответ, тем больше растёт рейтинг слова.</p>
+    <p class="intro">Программа покажет и произнесёт английское слово. Скажите перевод по-русски в микрофон или напишите его в поле и нажмите Enter. Чем быстрее верный ответ, тем больше растёт рейтинг слова: мгновенный ответ даёт +1,5.</p>
     <button class="btn big" id="startBtn" type="button">Начать</button>`;
   $('startBtn').onclick=()=>{sessStart=Date.now();
     if(voskSupported()&&!voskFailed&&active().some(shortAnswer)) getVosk().catch(()=>{});   // load the short-word recognizer in the background
@@ -1675,12 +1709,13 @@ function process(answers,shown,idk){
       t:rel(firstAt),done:now-shownAt,mic:rel(micAt),said:rel(saidAt),saidEnd:rel(saidEnd),r0:cur.r,seen:cur.seen,
       ans:String(shown||'').slice(0,60),p:practice?1:0,ts:now}).catch(()=>{}); }
   const sec=Math.max(0,((firstAt||Date.now())-shownAt)/1000);
-  let note='';
+  let note='', fastNote='';
   if(practice){ note='Режим без статистики: рейтинг не изменён'; }
   else{
     const before=cur.r;
     if(ok){
-      const nr=cur.r+speedFactor(sec);
+      const gain=speedFactor(sec,ansMode); fastNote=gain>1?' · быстрый ответ':'';
+      const nr=cur.r+gain;
       if(nr>RMAX+1e-9){cur.a=Date.now();cur.r=RMAX}else cur.r=round2(clamp(nr,RMIN,RMAX));
       cur.ok++;
       cur.t=round2(cur.t?cur.t*.7+sec*.3:sec);
@@ -1688,7 +1723,7 @@ function process(answers,shown,idk){
     cur.seen++; cur.last=Date.now();
     const d=round2(cur.r-before);
     note=cur.a?`Рейтинг больше +5: слово выучено и перенесено в архив · ответ через ${fmtSec(sec)}`
-      :`Рейтинг ${d>=0?'+':'−'}${Math.abs(d).toFixed(1).replace('.',',')} → ${fmtR(cur.r)}`+(ok?` · ответ через ${fmtSec(sec)}`:'');
+      :`Рейтинг ${d>=0?'+':'−'}${Math.abs(d).toFixed(1).replace('.',',')} → ${fmtR(cur.r)}`+(ok?` · ответ через ${fmtSec(sec)}${fastNote}`:'');
     const {k,...data}=cur;
     B.save(me,k,data).catch(()=>{const s=$('saveErr');if(s)s.hidden=false});
     logAnswer(ok);
