@@ -194,7 +194,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 12</p>
+    <p class="intro" style="font-size:.75rem">версия 13</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -1341,35 +1341,47 @@ function parseLooseJSON(t){
   const a=t.indexOf('{'), b=t.lastIndexOf('}'); if(a<0||b<=a) return null;
   try{return JSON.parse(t.slice(a,b+1))}catch(e){return null}
 }
+function fetchT(url,opt={},ms=20000){
+  const c=new AbortController(), t=setTimeout(()=>c.abort(),ms);
+  return fetch(url,{...opt,signal:c.signal}).finally(()=>clearTimeout(t));
+}
 const okSentence=j=>j&&typeof j.en==='string'&&typeof j.ru==='string'&&/[A-Za-z]/.test(j.en)&&CYR.test(j.ru);
 async function askText(prompt,seed){
   try{
-    const r=await fetch('https://text.pollinations.ai/'+encodeURIComponent(prompt)+'?model=openai&json=true&referrer=englishwords&seed='+seed);
+    const r=await fetchT('https://text.pollinations.ai/'+encodeURIComponent(prompt)+'?model=openai&json=true&referrer=englishwords&seed='+seed,{},25000);
     return r.ok?parseLooseJSON(await r.text()):null;
   }catch(e){return null}
 }
 async function askAboutPicture(prompt,imageUrl,seed){
   try{
-    const r=await fetch('https://text.pollinations.ai/openai',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await fetchT('https://text.pollinations.ai/openai',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({model:'openai',seed,referrer:'englishwords',response_format:{type:'json_object'},
-        messages:[{role:'user',content:[{type:'text',text:prompt},{type:'image_url',image_url:{url:imageUrl}}]}]})});
+        messages:[{role:'user',content:[{type:'text',text:prompt},{type:'image_url',image_url:{url:imageUrl}}]}]})},30000);
     if(!r.ok) return null;
     const t=await r.text(), d=parseLooseJSON(t);
     const c=d&&d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content;
     return c?parseLooseJSON(c):d;
   }catch(e){return null}
 }
+const BAD_PIC=/\b(map|diagram|chart|graph|logo|flag|coat of arms|emblem|seal|plan|scheme|schema|icon|signature|stamp|document|page|scan|book cover|poster|text|svg)\b/i;
+const stripTags=h=>String(h||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 async function findPicture(q){
-  for(const cat of ['&category=illustration','']){
+  for(const kind of ['filetype:bitmap','']){
     try{
-      const r=await fetch('https://api.openverse.org/v1/images/?q='+encodeURIComponent(q)+cat+'&mature=false&page_size=12');
-      if(!r.ok) continue;
+      const url='https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=15'
+        +'&gsrsearch='+encodeURIComponent(q+(kind?' '+kind:''))
+        +'&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=640&iiextmetadatafilter=Artist|LicenseShortName';
+      const r=await fetchT(url,{},15000); if(!r.ok) continue;
       const d=await r.json();
-      const list=(d.results||[]).filter(x=>x&&(x.thumbnail||x.url)&&(!x.width||!x.height||(x.width/x.height>.5&&x.width/x.height<2.2)));
-      if(list.length){
-        const x=list[0];
-        return {thumb:x.thumbnail||x.url,title:String(x.title||'').slice(0,120),by:String(x.creator||'').slice(0,80),
-          lic:((x.license||'')+' '+(x.license_version||'')).trim().toUpperCase(),link:x.foreign_landing_url||x.url||''};
+      const pages=Object.values(d&&d.query&&d.query.pages||{}).sort((x,y)=>(x.index||0)-(y.index||0));
+      for(const pg of pages){
+        const ii=pg.imageinfo&&pg.imageinfo[0]; if(!ii||!ii.thumburl) continue;
+        const title=String(pg.title||'').replace(/^File:/,'').replace(/\.[a-z0-9]+$/i,'').replace(/[_-]+/g,' ');
+        if(BAD_PIC.test(title)) continue;
+        const ratio=(ii.width||1)/(ii.height||1); if(ratio<.55||ratio>2.2) continue;
+        const md=ii.extmetadata||{};
+        return {thumb:ii.thumburl,title:title.slice(0,120),by:stripTags(md.Artist&&md.Artist.value).slice(0,80),
+          lic:stripTags(md.LicenseShortName&&md.LicenseShortName.value).slice(0,40),link:ii.descriptionurl||'',src:'Wikimedia Commons'};
       }
     }catch(e){}
   }
@@ -1397,7 +1409,7 @@ Give an accurate Russian translation. Reply with JSON only: {"en": "...", "ru": 
   }
   if(!base) return null;
   // saved only together with a picture, so a network failure is retried next time
-  return img?{en:base.en,ru:base.ru||'',lvl:base.lvl||lvl,src:base.src||'gen',img,v:EX_V}:base;
+  return img?{en:base.en,ru:base.ru||'',lvl:base.lvl||lvl,src:base.src||'gen',img,v:EX_V}:{...base,noimg:true};
 }
 /* one request at a time: the free services limit how often they can be asked */
 let exChain=Promise.resolve(); const exPending=new Map();
@@ -1421,8 +1433,9 @@ function warmPicture(ex){const u=ex&&ex.img&&ex.img.thumb;if(!u||warmed.has(u))r
 function exampleHTML(ex){
   const im=ex.img;
   return `<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" lang="en">${esc(ex.en)}</span><span class="ex-ru">${esc(ex.ru||'')}</span>${ex.lvl?`<span class="ex-lvl">${LEVEL_NAME[ex.lvl]}</span>`:''}</button>
+    ${!im&&ex.noimg?'<p class="credit">Подходящую картинку найти не удалось.</p>':''}
     ${im?`<figure class="illus" id="illus"><span class="illus-wait" id="illusWait">Загружаю картинку…</span><img id="illusImg" alt="${esc(im.title||'Иллюстрация к фразе')}" referrerpolicy="no-referrer" src="${esc(im.thumb)}"></figure>
-    <p class="credit">${im.link?`<a href="${esc(im.link)}" target="_blank" rel="noopener">${esc(im.title||'Иллюстрация')}</a>`:esc(im.title||'Иллюстрация')}${im.by?' · '+esc(im.by):''}${im.lic?' · '+esc(im.lic):''} · Openverse</p>`:''}`;
+    <p class="credit">${im.link?`<a href="${esc(im.link)}" target="_blank" rel="noopener">${esc(im.title||'Иллюстрация')}</a>`:esc(im.title||'Иллюстрация')}${im.by?' · '+esc(im.by):''}${im.lic?' · '+esc(im.lic):''} · ${esc(im.src||'Openverse')}</p>`:''}`;
 }
 function showExample(ex){
   const box=$('exBox'); if(!box) return;
@@ -1449,8 +1462,13 @@ function getVosk(){
   if(voskModel) return Promise.resolve(voskModel);
   if(!voskLoading) voskLoading=(async()=>{
     if(!window.Vosk) await loadScript('vosk.js');
-    voskModel=await window.Vosk.createModel('vosk-model-small-ru.tar.gz');
-    return voskModel;
+    const m=new window.Vosk.Model(new URL('vosk-model-small-ru.tar.gz',location.href).href);
+    await new Promise((res,rej)=>{
+      const t=setTimeout(()=>rej(new Error('timeout')),240000);
+      m.on('load',msg=>{clearTimeout(t);(msg&&msg.result)?res():rej(new Error('load failed'))});
+      m.on('error',msg=>{clearTimeout(t);rej(new Error(msg&&msg.error||'error'))});
+    });
+    voskModel=m; return m;
   })().catch(e=>{voskFailed=true;voskLoading=null;throw e});
   return voskLoading;
 }
@@ -1471,7 +1489,8 @@ function voskListen(){
   let stream=null, src=null, node=null, recog=null, timer=null, done=false;
   const cleanup=()=>{if(done)return;done=true;clearTimeout(timer);
     try{node&&node.disconnect()}catch(e){} try{src&&src.disconnect()}catch(e){}
-    try{stream&&stream.getTracks().forEach(t=>t.stop())}catch(e){} try{ctx.close()}catch(e){} try{recog&&recog.remove()}catch(e){}};
+    try{stream&&stream.getTracks().forEach(t=>t.stop())}catch(e){} try{ctx.close()}catch(e){} try{recog&&recog.remove()}catch(e){}
+    streamP.then(st=>st.getTracks().forEach(t=>t.stop())).catch(()=>{});};
   const me_={cancelled:false,abort(){cleanup()},stop(){cleanup()}};
   rec=me_;
   const live=()=>rec===me_&&!me_.cancelled&&phase==='ask'&&$('micBtn')===btn;
@@ -1557,14 +1576,15 @@ function nextWord(){
   shownAt=Date.now();
   speakTimer=setTimeout(()=>{if(phase==='ask'&&!rec)speak(cur.en)},SPEAK_DELAY);
   // get the example sentence and its picture ready while the learner is thinking
-  const w=cur; ensureExample(w).then(ex=>{if(ex)warmPicture(ex)});
+  const w=cur; if(!needsExample(w)||exPending.size<2) ensureExample(w).then(ex=>{if(ex)warmPicture(ex)});
 }
 function setStatus(t,err){const s=$('status');if(s){s.textContent=t;s.classList.toggle('err',!!err)}}
 let listenTimer=null;
 function toggleMic(){
   if(phase!=='ask') return;
   if(rec){stopRec();resetMic();setStatus('');return}
-  if(shortAnswer(cur)&&!voskFailed&&voskSupported()){voskListen();return}
+  if(shortAnswer(cur)&&!voskFailed&&voskSupported()&&voskModel){voskListen();return}
+  if(shortAnswer(cur)&&!voskFailed&&voskSupported()&&!voskModel) getVosk().catch(()=>{});
   if(!Rec){setStatus('Этот браузер не распознаёт речь. Откройте страницу в Chrome, Edge или Safari, либо напишите ответ.',true);return}
   hush(); clearTimeout(speakTimer);
   const inp=$('ans'), btn=$('micBtn'); inp.value='';
