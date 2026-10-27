@@ -194,7 +194,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 13</p>
+    <p class="intro" style="font-size:.75rem">версия 14</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -558,7 +558,7 @@ print|Print the picture.|Распечатай картинку.
 woman|The woman is my teacher.|Эта женщина — моя учительница.`;
 const EXAMPLES={};
 EXAMPLES_SRC.split('\n').forEach(l=>{const [w,en,ru]=l.split('|');if(w&&en&&ru)EXAMPLES[w.trim()]={en:en.trim(),ru:ru.trim()}});
-const SEED_ACCOUNTS = ['юра'];        // these new accounts start with the base word set; others start empty
+const SEED_ACCOUNTS = ['юра','папа'];        // these new accounts start with the base word set; others start empty
 /* Rating: a new word is 0 (neutral). A right answer adds up to +1 (less the longer the pause before answering),
    a wrong answer or "Не знаю" takes 1 away. The scale runs from -5 to +5; from +3 a word counts as learned. */
 const RMIN = -5, RMAX = 5, LEARNED = 3;
@@ -599,7 +599,8 @@ function makeFirebase(cfg){
     saveSession(key,id,s){return db.ref(ROOT+key+'/sessions/'+id).set(s)},
     addWords(key,map){return db.ref(ROOT+key+'/words').update(map)},
     removeWord(key,k){return db.ref(ROOT+key+'/words/'+k).remove()},
-    saveEx(key,k,ex){return db.ref(ROOT+key+'/words/'+k+'/ex').set(ex)}
+    saveEx(key,k,ex){return db.ref(ROOT+key+'/words/'+k+'/ex').set(ex)},
+    addLog(key,e){return db.ref(ROOT+key+'/log').push(e)}
   };
 }
 /* same-browser backend for testing: add #local to the address */
@@ -617,6 +618,7 @@ function makeLocal(){
     async save(key,k,w){setAt(key,'words',k,w)},
     async saveSession(key,id,s){setAt(key,'sessions',id,s)},
     async addWords(key,map){for(const k in map)setAt(key,'words',k,map[k])},
+    async addLog(key,e){setAt(key,'log',Date.now().toString(36)+Math.random().toString(36).slice(2,6),e)},
     async saveEx(key,k,ex){const u=get();if(u[key]&&u[key].words&&u[key].words[k]){u[key].words[k].ex=ex;put(u);setTimeout(emit,0)}},
     async removeWord(key,k){const u=get();if(u[key]&&u[key].words){delete u[key].words[k];put(u);setTimeout(emit,0)}}
   };
@@ -634,7 +636,7 @@ const backendReady=(async()=>{
   return null;
 })();
 
-let B=null, me=null, myName='', words=[], sessions=[];
+let B=null, me=null, myName='', words=[], sessions=[], answerLog=[];
 
 /* ---------- Login ---------- */
 const $=id=>document.getElementById(id);
@@ -667,8 +669,12 @@ function enter(){
   $('view-login').hidden=true; $('menu').hidden=false; $('lamp').hidden=false; $('bar').hidden=false;
   $('whoName').textContent=myName; sess=null; sessStart=null;
   let first=true;
+  Promise.all([getCommon(),getLevels(),getRank()]).catch(()=>{});
+  let seeded=false;
   B.watch(me,u=>{
     const map=u.words||{};
+    if(!seeded&&SEED_ACCOUNTS.includes(me)&&!Object.keys(map).length){seeded=true;B.addWords(me,baseWords()).catch(()=>{});}
+    answerLog=Object.values(u.log||{}).filter(e=>e&&e.ts).sort((a,b)=>a.ts-b.ts);
     words=Object.entries(map).filter(([k,w])=>w&&w.en&&Array.isArray(w.ru)&&w.ru.length)
       .map(([k,w])=>({...w,k,r:num(w.r),seen:num(w.seen),ok:num(w.ok),t:num(w.t),last:num(w.last),a:num(w.a)}));
     sessions=Object.entries(u.sessions||{}).map(([id,s])=>({id,start:num(s.start),end:num(s.end),n:num(s.n),ok:num(s.ok)})).filter(s=>s.start);
@@ -814,7 +820,32 @@ function renderLessons(){
     ${list.length?`<p class="hint">Всего времени: ${dur(time)}. Новое занятие начинается после нажатия «Начать» или после перерыва больше 30 минут.</p>
     <div class="tablewrap"><table><thead><tr><th>Дата</th><th>Начало</th><th>Длительность</th><th class="n">Слов</th><th class="n">Верно</th></tr></thead><tbody>
     ${list.map(x=>`<tr><td>${DF.format(x.start)}</td><td>${TF.format(x.start)}</td><td>${dur(x.end-x.start)}</td><td class="n">${x.n}</td><td class="n">${x.n?Math.round(x.ok/x.n*100)+'%':'—'}</td></tr>`).join('')}
-    </tbody></table></div>`:`<p class="empty">Занятий пока не было. Они появятся здесь после первых ответов на вкладке «Тренировка».</p>`}`;
+    </tbody></table></div>`:`<p class="empty">Занятий пока не было. Они появятся здесь после первых ответов на вкладке «Тренировка».</p>`}
+    ${speedHTML()}`;
+  const b=$('logCopy'); if(b) b.onclick=copyLog;
+}
+const median=a=>{if(!a.length)return null;const s=a.slice().sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2};
+const fmtMs=v=>v==null?'—':(v/1000).toFixed(1).replace('.',',')+' с';
+function speedHTML(){
+  if(!answerLog.length) return '';
+  const rows=[['voice','Голосом'],['text','Текстом']].map(([m,name])=>{
+    const ok=answerLog.filter(e=>e.m===m&&e.ok&&e.t!=null);
+    const fromEnd=ok.filter(e=>e.saidEnd!=null).map(e=>e.t-e.saidEnd);
+    return `<tr><td>${name}</td><td class="n">${ok.length}</td><td class="n">${fmtMs(median(ok.map(e=>e.t)))}</td><td class="n">${fmtMs(median(fromEnd))}</td><td class="n">${fmtMs(median(ok.map(e=>e.done)))}</td></tr>`;
+  }).join('');
+  return `<h2>Скорость ответа</h2>
+    <p class="hint">Медиана по верным ответам: сколько прошло от появления слова (и от конца его произношения) до начала ответа, и до того, как ответ засчитан.</p>
+    <div class="tablewrap"><table><thead><tr><th>Ответ</th><th class="n">Верных</th><th class="n">До начала ответа</th><th class="n">После произношения</th><th class="n">До результата</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="row"><button class="btn plain" id="logCopy" type="button">Скопировать журнал ответов (${answerLog.length})</button></div>
+    <textarea id="logText" readonly hidden></textarea>`;
+}
+function copyLog(){
+  const cols=['ts','en','ok','m','short','lvl','t','saidEnd','said','mic','done','r0','seen','p','ans'];
+  const lines=[cols.join('\t'),...answerLog.map(e=>cols.map(c=>c==='ts'?new Date(e.ts).toISOString():(e[c]==null?'':String(e[c]).replace(/\s+/g,' '))).join('\t'))];
+  const txt=lines.join('\n'), ta=$('logText'); ta.value=txt; ta.hidden=false; ta.select();
+  const b=$('logCopy');
+  try{navigator.clipboard.writeText(txt).then(()=>{b.textContent='Скопировано: '+answerLog.length+' ответов'},()=>{b.textContent='Выделено — скопируйте вручную (Ctrl+C)'})}
+  catch(e){b.textContent='Выделено — скопируйте вручную (Ctrl+C)'}
 }
 let sess=null, sessStart=null;   // current lesson; sessStart is set by "Начать"
 function logAnswer(ok){
@@ -1275,7 +1306,7 @@ function isCorrect(answers,w){
 let voices=[];
 function loadVoices(){try{voices=speechSynthesis.getVoices().filter(v=>/^en[-_]/i.test(v.lang))}catch(e){}}
 try{loadVoices();speechSynthesis.onvoiceschanged=loadVoices}catch(e){}
-function speak(t){try{const u=new SpeechSynthesisUtterance(t);u.lang='en-US';u.rate=.85;
+function speak(t,onstart,onend){try{const u=new SpeechSynthesisUtterance(t);u.lang='en-US';u.rate=.85;if(onstart)u.onstart=onstart;if(onend)u.onend=onend;
   const v=voices.find(v=>/en[-_]US/i.test(v.lang))||voices[0];if(v)u.voice=v;speechSynthesis.cancel();speechSynthesis.speak(u)}catch(e){}}
 function hush(){try{speechSynthesis.cancel()}catch(e){}}
 const Rec=window.SpeechRecognition||window.webkitSpeechRecognition;
@@ -1512,7 +1543,10 @@ function voskListen(){
       cleanup(); rec=null; resetMic(); process([t],t);
     });
     node=ctx.createScriptProcessor(4096,1,1);
-    node.onaudioprocess=e=>{if(!done)try{recog.acceptWaveform(e.inputBuffer)}catch(err){}};
+    node.onaudioprocess=e=>{if(done)return;
+      if(!firstAt){const d=e.inputBuffer.getChannelData(0);let s2=0;for(let i=0;i<d.length;i+=4)s2+=d[i]*d[i];
+        if(Math.sqrt(s2/(d.length/4))>0.03) firstAt=Date.now()-Math.round(e.inputBuffer.duration*500);}
+      try{recog.acceptWaveform(e.inputBuffer)}catch(err){}};
     src.connect(node); node.connect(ctx.destination);
     $('micLbl').textContent='Слушаю'; inp.placeholder='Слушаю…'; setStatus('Говорите перевод');
     timer=setTimeout(()=>{ if(!live())return; cleanup(); rec=null; resetMic();
@@ -1528,7 +1562,7 @@ function voskListen(){
 }
 
 /* ---------- The cycle ---------- */
-let cur=null, phase='start', speakTimer=null, shownAt=0, firstAt=0;
+let cur=null, phase='start', speakTimer=null, shownAt=0, firstAt=0, ansMode='', micAt=0, saidAt=0, saidEnd=0;
 const card=$('view-train');
 const MIC=`<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>`;
 const metaHTML=w=>`${meter(w.r)}<span>${w.seen?'показано '+w.seen+' раз':'новое слово'}</span>`;
@@ -1557,7 +1591,7 @@ function nextWord(){
   stopRec(); hush(); clearTimeout(speakTimer);
   if(!active().length){renderStart();return}
   cur=pick(); recent.push(cur.k); while(recent.length>Math.min(4,active().length-1)) recent.shift();
-  phase='ask'; firstAt=0;
+  phase='ask'; firstAt=0; ansMode=''; micAt=0; saidAt=0; saidEnd=0;
   card.innerHTML=`<div class="meta" id="meta">${metaHTML(cur)}</div>
     <button class="word" id="word" type="button" lang="en" title="Нажмите, чтобы услышать ещё раз">${esc(cur.en)}</button>
     <form class="field" id="form"><input id="ans" lang="ru" autocomplete="off" placeholder="Перевод по-русски" aria-label="Ваш ответ"><button class="btn" type="submit">Ввод</button></form>
@@ -1568,13 +1602,15 @@ function nextWord(){
     <p class="status" id="status"></p>`;
   $('word').onclick=()=>speak(cur.en);
   $('micBtn').onclick=toggleMic;
-  $('idkBtn').onclick=()=>{if(phase==='ask')process([],'',true)};
+  $('idkBtn').onclick=()=>{if(phase==='ask'){ansMode='idk';process([],'',true)}};
   $('ans').oninput=()=>{if(!firstAt)firstAt=Date.now();if(rec){stopRec();setStatus('')}};
   $('form').onsubmit=e=>{e.preventDefault();const v=$('ans').value.trim();
-    if(!v){setStatus('Введите перевод, нажмите микрофон или «Не знаю»');$('ans').focus();return}process([v],v)};
+    if(!v){setStatus('Введите перевод, нажмите микрофон или «Не знаю»');$('ans').focus();return}
+    if(!rec) ansMode='text'; process([v],v)};
   if(matchMedia('(pointer:fine)').matches) $('ans').focus();   // on phones don't pop the keyboard over the word
   shownAt=Date.now();
-  speakTimer=setTimeout(()=>{if(phase==='ask'&&!rec)speak(cur.en)},SPEAK_DELAY);
+  const sw=cur;
+  speakTimer=setTimeout(()=>{if(phase==='ask'&&!rec)speak(sw.en,()=>{if(cur===sw&&!saidAt)saidAt=Date.now()},()=>{if(cur===sw&&!saidEnd)saidEnd=Date.now()})},SPEAK_DELAY);
   // get the example sentence and its picture ready while the learner is thinking
   const w=cur; if(!needsExample(w)||exPending.size<2) ensureExample(w).then(ex=>{if(ex)warmPicture(ex)});
 }
@@ -1583,6 +1619,7 @@ let listenTimer=null;
 function toggleMic(){
   if(phase!=='ask') return;
   if(rec){stopRec();resetMic();setStatus('');return}
+  ansMode='voice'; if(!micAt) micAt=Date.now();
   if(shortAnswer(cur)&&!voskFailed&&voskSupported()&&voskModel){voskListen();return}
   if(shortAnswer(cur)&&!voskFailed&&voskSupported()&&!voskModel) getVosk().catch(()=>{});
   if(!Rec){setStatus('Этот браузер не распознаёт речь. Откройте страницу в Chrome, Edge или Safari, либо напишите ответ.',true);return}
@@ -1633,6 +1670,10 @@ function resetMic(){
 function process(answers,shown,idk){
   if(phase!=='ask') return; phase='result'; stopRec(); hush(); clearTimeout(speakTimer);
   const ok=!idk&&isCorrect(answers,cur);
+  { const now=Date.now(), rel=t=>t?t-shownAt:null;
+    B.addLog(me,{k:cur.k,en:cur.en,ok:ok?1:0,m:ansMode||(idk?'idk':'text'),short:shortAnswer(cur)?1:0,lvl:wordLevel(cur.en),
+      t:rel(firstAt),done:now-shownAt,mic:rel(micAt),said:rel(saidAt),saidEnd:rel(saidEnd),r0:cur.r,seen:cur.seen,
+      ans:String(shown||'').slice(0,60),p:practice?1:0,ts:now}).catch(()=>{}); }
   const sec=Math.max(0,((firstAt||Date.now())-shownAt)/1000);
   let note='';
   if(practice){ note='Режим без статистики: рейтинг не изменён'; }
