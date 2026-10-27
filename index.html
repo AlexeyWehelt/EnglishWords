@@ -151,9 +151,11 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
 .ex-lvl{font-size:.72rem;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-top:2px}
 .ex-wait{margin:6px 0 0;font-size:.85rem;color:var(--muted)}
 .illus{margin:10px 0 0;position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1px solid var(--line);aspect-ratio:640/420;max-width:100%;display:grid;place-items:center}
-.illus img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s;grid-area:1/1}
+.illus img{width:100%;height:100%;object-fit:contain;background:#fff;display:block;opacity:0;transition:opacity .3s;grid-area:1/1}
 .illus img.ready{opacity:1}
 .illus-wait{grid-area:1/1;font-size:.82rem;color:var(--muted)}
+.credit{margin:4px 0 0;font-size:.68rem;color:var(--muted);overflow-wrap:anywhere}
+.credit a{color:inherit}
 .empty{color:var(--muted);text-align:center;padding:18px 0;margin:0}
 @media (max-width:460px){.sum{grid-template-columns:repeat(2,minmax(0,1fr))}.menu .who{margin-left:0;width:100%;padding:4px 8px}}
 @media (prefers-reduced-motion:no-preference){
@@ -192,7 +194,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 11</p>
+    <p class="intro" style="font-size:.75rem">версия 12</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -318,6 +320,124 @@ word|слово
 work|работа; работать
 print|печатать; печать
 woman|женщина`;
+/* Search words for a picture to each built-in sentence */
+const IMGQ_SRC = `about|friends talking
+after|children playing
+already|empty plate
+also|cats
+always|smiling girl
+and|cat and dog
+any|question mark
+at|school
+because|snow winter
+before|washing hands
+but|tired runner
+each|children reading books
+then|eating breakfast
+else|shopping
+for|gift box
+in|cat in box
+just|sleeping cat
+like|apples
+near|small shop
+never|fish
+of|cup of tea
+often|park
+on|book on table
+only|pen
+or|tea coffee
+out|kids outdoors
+some|glass of water
+soon|waving goodbye
+today|calendar
+to|school bus
+usually|alarm clock
+here|waving hand
+how|smiling face
+that|bicycle
+there|house
+these|red apples
+this|bedroom
+those|birds singing
+what|question
+when|alarm clock morning
+where|mobile phone
+who|boy
+why|sad boy
+answer|raised hand classroom
+ask|question mark
+bore|yawning
+check|checklist
+come|party
+complete|puzzle
+do|homework
+download|download
+draw|drawing cat
+drink|milk
+eat|soup
+get|letter envelope
+give|ball
+go|walking home
+have|sister
+know|light bulb idea
+listen|headphones
+live|city
+look|sky clouds
+love|mother child
+make|cake
+move|statue
+need|help
+put|book on desk
+run|running boy
+say|hello
+see|bird
+send|camera photo
+set|alarm clock
+sing|singing
+sleep|sleeping baby
+speak|talking people
+study|student desk
+swim|fish swimming
+take|holding hands
+talk|two people talking
+tell|storytelling
+think|thinking man
+use|pencil
+want|ice cream
+watch|television
+arrow|arrow sign
+bad|rain storm
+child|child playing
+children|children school
+date|calendar
+family|family
+fast|race car
+favorite|blue color
+good|book
+great|light bulb
+home|house
+later|clock
+lesson|classroom
+letter|letter envelope
+life|flowers sun
+man|tall man
+page|open book
+paper|paper sheet
+parents|parents
+poor|hungry cat
+ready|runner start
+room|small room
+science|science laboratory
+screen|computer screen
+sentence|text book
+slow|turtle
+sometimes|comic book
+song|music notes
+time|clock
+word|alphabet letters
+work|office worker
+print|printer
+woman|teacher`;
 /* A simple sentence for each base word: shown and spoken after a wrong answer */
 const EXAMPLES_SRC = `about|We talk about music.|Мы говорим о музыке.
 after|I play after school.|Я играю после школы.
@@ -1202,68 +1322,119 @@ const LEVEL_SPEC={
   3:'14 to 25 words, a natural and rich sentence for an advanced learner; complex grammar and sophisticated vocabulary are welcome (B2–C1)'};
 const LEVEL_NAME={1:'простой пример',2:'пример посложнее',3:'серьёзный пример'};
 const seedOf=s=>{let h=7;for(const ch of s)h=(h*31+ch.charCodeAt(0))>>>0;return h%100000};
+/* Picture first, phrase from the picture:
+   1) a real illustration is found on Openverse (openly licensed images; the search words come from the built-in list or from the AI);
+   2) the AI looks at the picture and writes a sentence with the word that describes it, at the word's level;
+   if the AI is not available, the built-in or earlier sentence is shown with the picture. */
+const IMGQ={};IMGQ_SRC.split('\n').forEach(l=>{const[a,b]=l.split('|');if(a&&b)IMGQ[a.trim()]=b.trim()});
+const EX_V=2;
 function exampleOf(w){
+  if(w.ex&&w.ex.en&&w.ex.v===EX_V) return w.ex;
   if(w.ex&&w.ex.en&&w.ex.src==='gen') return w.ex;
   if(EXAMPLES[w.en]) return {...EXAMPLES[w.en],lvl:1};
   if(w.ex&&w.ex.en) return w.ex;          // a sentence taken from the loaded text
   return null;
 }
-const needsExample=w=>!EXAMPLES[w.en]&&!(w.ex&&w.ex.src==='gen'&&w.ex.en);
+const needsExample=w=>!(w.ex&&w.ex.v===EX_V);
 function parseLooseJSON(t){
   try{return JSON.parse(t)}catch(e){}
   const a=t.indexOf('{'), b=t.lastIndexOf('}'); if(a<0||b<=a) return null;
   try{return JSON.parse(t.slice(a,b+1))}catch(e){return null}
 }
-async function genExample(w){
-  await Promise.all([getCommon(),getLevels(),getRank()]);
-  const lvl=wordLevel(w.en), kind=w.en.includes(' ')?'expression':'word';
-  const prompt=`You write example sentences for a Russian-speaking learner of English.
-The ${kind}: "${w.en}" (meaning: ${w.ru.slice(0,2).join(', ')}).
-Write ONE funny, good-natured English sentence that uses this ${kind} in this meaning. Difficulty: ${LEVEL_SPEC[lvl]}.
-Then give an accurate Russian translation of the sentence, and a short English description (at most 25 words) of a funny cartoon picture showing the sentence.
-Reply with JSON only, no other text: {"en": "...", "ru": "...", "scene": "..."}`;
+const okSentence=j=>j&&typeof j.en==='string'&&typeof j.ru==='string'&&/[A-Za-z]/.test(j.en)&&CYR.test(j.ru);
+async function askText(prompt,seed){
   try{
-    const r=await fetch('https://text.pollinations.ai/'+encodeURIComponent(prompt)+'?model=openai&json=true&referrer=englishwords&seed='+seedOf(w.k));
-    if(!r.ok) return null;
-    const j=parseLooseJSON(await r.text());
-    if(!j||typeof j.en!=='string'||typeof j.ru!=='string'||!/[A-Za-z]/.test(j.en)||!CYR.test(j.ru)) return null;
-    return {en:j.en.trim().slice(0,300),ru:j.ru.trim().slice(0,300),scene:String(j.scene||'').trim().slice(0,300),lvl,src:'gen'};
+    const r=await fetch('https://text.pollinations.ai/'+encodeURIComponent(prompt)+'?model=openai&json=true&referrer=englishwords&seed='+seed);
+    return r.ok?parseLooseJSON(await r.text()):null;
   }catch(e){return null}
 }
-/* one request at a time: the free service limits how often it can be asked */
+async function askAboutPicture(prompt,imageUrl,seed){
+  try{
+    const r=await fetch('https://text.pollinations.ai/openai',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'openai',seed,referrer:'englishwords',response_format:{type:'json_object'},
+        messages:[{role:'user',content:[{type:'text',text:prompt},{type:'image_url',image_url:{url:imageUrl}}]}]})});
+    if(!r.ok) return null;
+    const t=await r.text(), d=parseLooseJSON(t);
+    const c=d&&d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content;
+    return c?parseLooseJSON(c):d;
+  }catch(e){return null}
+}
+async function findPicture(q){
+  for(const cat of ['&category=illustration','']){
+    try{
+      const r=await fetch('https://api.openverse.org/v1/images/?q='+encodeURIComponent(q)+cat+'&mature=false&page_size=12');
+      if(!r.ok) continue;
+      const d=await r.json();
+      const list=(d.results||[]).filter(x=>x&&(x.thumbnail||x.url)&&(!x.width||!x.height||(x.width/x.height>.5&&x.width/x.height<2.2)));
+      if(list.length){
+        const x=list[0];
+        return {thumb:x.thumbnail||x.url,title:String(x.title||'').slice(0,120),by:String(x.creator||'').slice(0,80),
+          lic:((x.license||'')+' '+(x.license_version||'')).trim().toUpperCase(),link:x.foreign_landing_url||x.url||''};
+      }
+    }catch(e){}
+  }
+  return null;
+}
+async function genExample(w){
+  await Promise.all([getCommon(),getLevels(),getRank()]);
+  const lvl=wordLevel(w.en), kind=w.en.includes(' ')?'expression':'word', seed=seedOf(w.k), mean=w.ru.slice(0,2).join(', ');
+  let base=exampleOf(w), q=IMGQ[w.en]||'';
+  if(!q){
+    const j=await askText(`You help a Russian-speaking learner of English.
+The ${kind}: "${w.en}" (meaning: ${mean}).
+Write ONE good-natured English sentence that uses this ${kind} in this meaning. Difficulty: ${LEVEL_SPEC[lvl]}.
+Give an accurate Russian translation, and 1–3 simple concrete English search words for finding a clear illustration of the sentence (objects or people, not abstract ideas).
+Reply with JSON only: {"en": "...", "ru": "...", "img_query": "..."}`,seed);
+    if(okSentence(j)) base={en:j.en.trim().slice(0,300),ru:j.ru.trim().slice(0,300),lvl,src:'gen'};
+    q=(j&&typeof j.img_query==='string'&&j.img_query.trim())||lemma(w.en.split(' ').pop())||w.en;
+  }
+  const img=await findPicture(q);
+  if(img){
+    const j=await askAboutPicture(`You help a Russian-speaking learner of English. Look at the picture.
+Write ONE funny, good-natured English sentence that describes what is in this picture and uses the ${kind} "${w.en}" in the meaning "${mean}". Difficulty: ${LEVEL_SPEC[lvl]}.
+Give an accurate Russian translation. Reply with JSON only: {"en": "...", "ru": "..."}`,img.thumb,seed);
+    if(okSentence(j)) base={en:j.en.trim().slice(0,300),ru:j.ru.trim().slice(0,300),lvl,src:'pic'};
+  }
+  if(!base) return null;
+  // saved only together with a picture, so a network failure is retried next time
+  return img?{en:base.en,ru:base.ru||'',lvl:base.lvl||lvl,src:base.src||'gen',img,v:EX_V}:base;
+}
+/* one request at a time: the free services limit how often they can be asked */
 let exChain=Promise.resolve(); const exPending=new Map();
 function ensureExample(w){
   if(!needsExample(w)) return Promise.resolve(exampleOf(w));
   if(exPending.has(w.k)) return exPending.get(w.k);
   const p=exChain.then(()=>genExample(w)).then(ex=>{
     exPending.delete(w.k);
-    if(ex){
+    if(ex&&ex.v===EX_V){
       [w,words.find(x=>x.k===w.k),cur&&cur.k===w.k?cur:null].forEach(o=>{if(o)o.ex=ex});
       B.saveEx(me,w.k,ex).catch(()=>{});
+      return ex;
     }
-    return exampleOf(w);
+    return ex||exampleOf(w);
   });
   exChain=p.catch(()=>{}); exPending.set(w.k,p);
   return p;
 }
-function pictureURL(ex,k){
-  const p="Funny cartoon illustration in the style of a children's picture book, bright cheerful colors, clean shapes, humorous and kind, no text, no letters, no captions. Scene: "+(ex.scene||ex.en);
-  return 'https://image.pollinations.ai/prompt/'+encodeURIComponent(p)+'?width=640&height=420&nologo=true&referrer=englishwords&seed='+seedOf(k);
-}
 const warmed=new Set();
-function warmPicture(ex,k){const u=pictureURL(ex,k);if(warmed.has(u))return;warmed.add(u);const im=new Image();im.referrerPolicy='no-referrer';im.src=u}
-function exampleHTML(ex,k){
+function warmPicture(ex){const u=ex&&ex.img&&ex.img.thumb;if(!u||warmed.has(u))return;warmed.add(u);const im=new Image();im.referrerPolicy='no-referrer';im.src=u}
+function exampleHTML(ex){
+  const im=ex.img;
   return `<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" lang="en">${esc(ex.en)}</span><span class="ex-ru">${esc(ex.ru||'')}</span>${ex.lvl?`<span class="ex-lvl">${LEVEL_NAME[ex.lvl]}</span>`:''}</button>
-    <figure class="illus" id="illus"><span class="illus-wait" id="illusWait">Рисую картинку…</span><img id="illusImg" alt="Иллюстрация к фразе" referrerpolicy="no-referrer" src="${pictureURL(ex,k)}"></figure>`;
+    ${im?`<figure class="illus" id="illus"><span class="illus-wait" id="illusWait">Загружаю картинку…</span><img id="illusImg" alt="${esc(im.title||'Иллюстрация к фразе')}" referrerpolicy="no-referrer" src="${esc(im.thumb)}"></figure>
+    <p class="credit">${im.link?`<a href="${esc(im.link)}" target="_blank" rel="noopener">${esc(im.title||'Иллюстрация')}</a>`:esc(im.title||'Иллюстрация')}${im.by?' · '+esc(im.by):''}${im.lic?' · '+esc(im.lic):''} · Openverse</p>`:''}`;
 }
-function showExample(ex,k){
+function showExample(ex){
   const box=$('exBox'); if(!box) return;
   if(!ex){box.innerHTML='';return}
-  box.innerHTML=exampleHTML(ex,k);
+  box.innerHTML=exampleHTML(ex);
   $('exBtn').onclick=()=>speak(ex.en);
-  const img=$('illusImg'), wait=$('illusWait'), fig=$('illus');
-  img.onload=()=>{wait.hidden=true;img.classList.add('ready')};
-  img.onerror=()=>{fig.hidden=true};
+  const img=$('illusImg');
+  if(img){
+    const wait=$('illusWait'), fig=$('illus');
+    img.onload=()=>{wait.hidden=true;img.classList.add('ready')};
+    img.onerror=()=>{fig.hidden=true;const c=box.querySelector('.credit');if(c)c.hidden=true};
+  }
   clearTimeout(speakTimer); speakTimer=setTimeout(()=>{if(phase==='result')speak(ex.en)},400);
 }
 
@@ -1386,7 +1557,7 @@ function nextWord(){
   shownAt=Date.now();
   speakTimer=setTimeout(()=>{if(phase==='ask'&&!rec)speak(cur.en)},SPEAK_DELAY);
   // get the example sentence and its picture ready while the learner is thinking
-  const w=cur; ensureExample(w).then(ex=>{if(ex)warmPicture(ex,w.k)});
+  const w=cur; ensureExample(w).then(ex=>{if(ex)warmPicture(ex)});
 }
 function setStatus(t,err){const s=$('status');if(s){s.textContent=t;s.classList.toggle('err',!!err)}}
 let listenTimer=null;
@@ -1464,18 +1635,19 @@ function process(answers,shown,idk){
   }
   $('meta').innerHTML=practice?metaHTML(cur):`${meter(cur.r)}<span>показано ${cur.seen} раз</span>`;
   $('form').remove(); document.querySelector('.actions').remove(); $('status').remove();
-  const exm=!ok?exampleOf(cur):null, exWait=!ok&&exPending.has(cur.k);
+  const exm=!ok?exampleOf(cur):null, exWait=!ok&&needsExample(cur);
   card.insertAdjacentHTML('beforeend',`<div class="verdict ${ok?'ok':'bad'}"><b>${ok?'Правильно':idk?'Запомните':'Неправильно'}</b>
       <div class="meanings">${cur.ru.map(esc).join('; ')}</div>${idk?'':`<span class="your">Ваш ответ: ${esc(shown)}</span>`}
-      <div id="exBox">${exWait&&(!exm||needsExample(cur))?'<p class="ex-wait">Подбираю пример…</p>':''}</div>
+      <div id="exBox">${exWait&&!exm?'<p class="ex-wait">Подбираю пример…</p>':''}</div>
       <span class="delta">${note}</span></div>
     <button class="btn big" id="nextBtn" type="button">Далее</button>
     <p class="status err" id="saveErr" hidden>Результат не сохранился: нет связи с сервером.</p>`);
   const nb=$('nextBtn'); nb.onclick=nextWord; nb.focus();
   if(!ok){
     const w=cur;
-    if(exWait) ensureExample(w).then(ex=>{if(phase==='result'&&cur&&cur.k===w.k)showExample(ex||exm,w.k)});
-    else showExample(exm,w.k);
+    if(exm) showExample(exm);
+    // a phrase made from a picture may still be on its way: show it as soon as it arrives
+    if(exWait) ensureExample(w).then(ex=>{if(ex&&ex!==exm&&ex.en&&phase==='result'&&cur&&cur.k===w.k)showExample(ex)});
   }
 }
 document.addEventListener('keydown',e=>{
