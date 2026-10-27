@@ -148,6 +148,12 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
 .ru-edit{width:100%;margin-top:4px;padding:6px 8px;font-size:.88rem;border-radius:8px}
 .ru-edit.saved{outline:2px solid var(--ok)} .ru-edit.err{outline:2px solid var(--bad)}
 .del{border:0;background:none;color:var(--bad);font:inherit;font-size:.78rem;cursor:pointer;padding:2px 0;text-decoration:underline;text-underline-offset:3px}
+.ex-lvl{font-size:.72rem;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-top:2px}
+.ex-wait{margin:6px 0 0;font-size:.85rem;color:var(--muted)}
+.illus{margin:10px 0 0;position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1px solid var(--line);aspect-ratio:640/420;max-width:100%;display:grid;place-items:center}
+.illus img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .3s;grid-area:1/1}
+.illus img.ready{opacity:1}
+.illus-wait{grid-area:1/1;font-size:.82rem;color:var(--muted)}
 .empty{color:var(--muted);text-align:center;padding:18px 0;margin:0}
 @media (max-width:460px){.sum{grid-template-columns:repeat(2,minmax(0,1fr))}.menu .who{margin-left:0;width:100%;padding:4px 8px}}
 @media (prefers-reduced-motion:no-preference){
@@ -186,7 +192,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 10</p>
+    <p class="intro" style="font-size:.75rem">версия 11</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -472,7 +478,8 @@ function makeFirebase(cfg){
     save(key,k,w){return db.ref(ROOT+key+'/words/'+k).set(w)},
     saveSession(key,id,s){return db.ref(ROOT+key+'/sessions/'+id).set(s)},
     addWords(key,map){return db.ref(ROOT+key+'/words').update(map)},
-    removeWord(key,k){return db.ref(ROOT+key+'/words/'+k).remove()}
+    removeWord(key,k){return db.ref(ROOT+key+'/words/'+k).remove()},
+    saveEx(key,k,ex){return db.ref(ROOT+key+'/words/'+k+'/ex').set(ex)}
   };
 }
 /* same-browser backend for testing: add #local to the address */
@@ -490,6 +497,7 @@ function makeLocal(){
     async save(key,k,w){setAt(key,'words',k,w)},
     async saveSession(key,id,s){setAt(key,'sessions',id,s)},
     async addWords(key,map){for(const k in map)setAt(key,'words',k,map[k])},
+    async saveEx(key,k,ex){const u=get();if(u[key]&&u[key].words&&u[key].words[k]){u[key].words[k].ex=ex;put(u);setTimeout(emit,0)}},
     async removeWord(key,k){const u=get();if(u[key]&&u[key].words){delete u[key].words[k];put(u);setTimeout(emit,0)}}
   };
 }
@@ -1154,6 +1162,181 @@ const Rec=window.SpeechRecognition||window.webkitSpeechRecognition;
 let rec=null;
 function stopRec(){clearTimeout(listenTimer);if(rec){const r=rec;rec=null;r.cancelled=true;try{r.abort()}catch(e){}}}
 
+/* ---------- Example sentences by word level, with a funny picture ---------- */
+/* Level of a word: CEFR-J word list (A1–C2) first; for words not in it, how common the word is.
+   1 = beginner (A1–A2): very simple sentence; 2 = B1–B2: everyday sentence; 3 = C1–C2 or rare: a serious sentence. */
+let LEVELS=null;
+async function getLevels(){
+  if(LEVELS) return LEVELS;
+  const m=new Map();
+  try{const r=await fetch('word-levels.txt');if(r.ok)(await r.text()).split('\n').forEach(l=>{const [lv,list]=l.split(':');const n={A1:1,A2:1,B1:2,B2:2,C1:3,C2:3}[lv];
+    if(n&&list) list.split(' ').forEach(w=>{if(w&&!m.has(w))m.set(w.replace(/_/g,' '),n)})})}catch(e){}
+  LEVELS=m; return m;
+}
+let RANK=null;
+async function getRank(){
+  if(RANK) return RANK;
+  RANK=new Map();
+  try{const r=await fetch('words-common.txt');if(r.ok)(await r.text()).split(/\s+/).forEach((w,i)=>{if(w&&!RANK.has(w))RANK.set(w,i)})}catch(e){}
+  return RANK;
+}
+function levelOfOne(t){
+  if(BASE_DICT[t]||PHRASES[t]) return 1;
+  if(LEVELS&&LEVELS.has(t)) return LEVELS.get(t);
+  const l=lemma(t)||t;
+  if(BASE_DICT[l]) return 1;
+  if(LEVELS&&LEVELS.has(l)) return LEVELS.get(l);
+  const r=RANK&&RANK.has(l)?RANK.get(l):null;
+  if(r===null) return 3;
+  return r<3000&&l.length<=6?1:2;
+}
+function wordLevel(en){
+  if(BASE_DICT[en]||PHRASES[en]) return 1;
+  if(LEVELS&&LEVELS.has(en)) return LEVELS.get(en);
+  const parts=en.split(' ').filter(p=>p&&!SKIPW.has(p)&&!/^(to|of|in|on|at|for|up|out|off|with|be)$/.test(p));
+  return parts.length?Math.max(...parts.map(levelOfOne)):1;
+}
+const LEVEL_SPEC={
+  1:'extremely simple: 3 to 6 words, Present Simple, only the most basic everyday words, for a child who has just started learning English (A1)',
+  2:'8 to 14 words, a lively everyday situation, ordinary vocabulary and grammar (A2–B1)',
+  3:'14 to 25 words, a natural and rich sentence for an advanced learner; complex grammar and sophisticated vocabulary are welcome (B2–C1)'};
+const LEVEL_NAME={1:'простой пример',2:'пример посложнее',3:'серьёзный пример'};
+const seedOf=s=>{let h=7;for(const ch of s)h=(h*31+ch.charCodeAt(0))>>>0;return h%100000};
+function exampleOf(w){
+  if(w.ex&&w.ex.en&&w.ex.src==='gen') return w.ex;
+  if(EXAMPLES[w.en]) return {...EXAMPLES[w.en],lvl:1};
+  if(w.ex&&w.ex.en) return w.ex;          // a sentence taken from the loaded text
+  return null;
+}
+const needsExample=w=>!EXAMPLES[w.en]&&!(w.ex&&w.ex.src==='gen'&&w.ex.en);
+function parseLooseJSON(t){
+  try{return JSON.parse(t)}catch(e){}
+  const a=t.indexOf('{'), b=t.lastIndexOf('}'); if(a<0||b<=a) return null;
+  try{return JSON.parse(t.slice(a,b+1))}catch(e){return null}
+}
+async function genExample(w){
+  await Promise.all([getCommon(),getLevels(),getRank()]);
+  const lvl=wordLevel(w.en), kind=w.en.includes(' ')?'expression':'word';
+  const prompt=`You write example sentences for a Russian-speaking learner of English.
+The ${kind}: "${w.en}" (meaning: ${w.ru.slice(0,2).join(', ')}).
+Write ONE funny, good-natured English sentence that uses this ${kind} in this meaning. Difficulty: ${LEVEL_SPEC[lvl]}.
+Then give an accurate Russian translation of the sentence, and a short English description (at most 25 words) of a funny cartoon picture showing the sentence.
+Reply with JSON only, no other text: {"en": "...", "ru": "...", "scene": "..."}`;
+  try{
+    const r=await fetch('https://text.pollinations.ai/'+encodeURIComponent(prompt)+'?model=openai&json=true&referrer=englishwords&seed='+seedOf(w.k));
+    if(!r.ok) return null;
+    const j=parseLooseJSON(await r.text());
+    if(!j||typeof j.en!=='string'||typeof j.ru!=='string'||!/[A-Za-z]/.test(j.en)||!CYR.test(j.ru)) return null;
+    return {en:j.en.trim().slice(0,300),ru:j.ru.trim().slice(0,300),scene:String(j.scene||'').trim().slice(0,300),lvl,src:'gen'};
+  }catch(e){return null}
+}
+/* one request at a time: the free service limits how often it can be asked */
+let exChain=Promise.resolve(); const exPending=new Map();
+function ensureExample(w){
+  if(!needsExample(w)) return Promise.resolve(exampleOf(w));
+  if(exPending.has(w.k)) return exPending.get(w.k);
+  const p=exChain.then(()=>genExample(w)).then(ex=>{
+    exPending.delete(w.k);
+    if(ex){
+      [w,words.find(x=>x.k===w.k),cur&&cur.k===w.k?cur:null].forEach(o=>{if(o)o.ex=ex});
+      B.saveEx(me,w.k,ex).catch(()=>{});
+    }
+    return exampleOf(w);
+  });
+  exChain=p.catch(()=>{}); exPending.set(w.k,p);
+  return p;
+}
+function pictureURL(ex,k){
+  const p="Funny cartoon illustration in the style of a children's picture book, bright cheerful colors, clean shapes, humorous and kind, no text, no letters, no captions. Scene: "+(ex.scene||ex.en);
+  return 'https://image.pollinations.ai/prompt/'+encodeURIComponent(p)+'?width=640&height=420&nologo=true&referrer=englishwords&seed='+seedOf(k);
+}
+const warmed=new Set();
+function warmPicture(ex,k){const u=pictureURL(ex,k);if(warmed.has(u))return;warmed.add(u);const im=new Image();im.referrerPolicy='no-referrer';im.src=u}
+function exampleHTML(ex,k){
+  return `<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" lang="en">${esc(ex.en)}</span><span class="ex-ru">${esc(ex.ru||'')}</span>${ex.lvl?`<span class="ex-lvl">${LEVEL_NAME[ex.lvl]}</span>`:''}</button>
+    <figure class="illus" id="illus"><span class="illus-wait" id="illusWait">Рисую картинку…</span><img id="illusImg" alt="Иллюстрация к фразе" referrerpolicy="no-referrer" src="${pictureURL(ex,k)}"></figure>`;
+}
+function showExample(ex,k){
+  const box=$('exBox'); if(!box) return;
+  if(!ex){box.innerHTML='';return}
+  box.innerHTML=exampleHTML(ex,k);
+  $('exBtn').onclick=()=>speak(ex.en);
+  const img=$('illusImg'), wait=$('illusWait'), fig=$('illus');
+  img.onload=()=>{wait.hidden=true;img.classList.add('ready')};
+  img.onerror=()=>{fig.hidden=true};
+  clearTimeout(speakTimer); speakTimer=setTimeout(()=>{if(phase==='result')speak(ex.en)},400);
+}
+
+/* ---------- Short answers (о, в, и, на…) by voice: offline recognizer with a closed word list ----------
+   The browser's own recognizer drops one-syllable words. For words whose translation is that short we use Vosk
+   (small Russian model, loaded once and kept by the browser) and give it the list of answers it may hear. */
+const SHORT_RU='о об обо в во на и а у к ко с со из за до по от для под над при без про через или но да не же ли бы то это тот как так где кто что уже ещё еще мы вы он она оно они я ты мой там тут все всё'.split(' ');
+const shortAnswer=w=>w.ru.flatMap(m=>m.split(',')).map(norm).some(a=>a&&!a.includes(' ')&&a.length<=3);
+let voskModel=null, voskLoading=null, voskFailed=false;
+const voskSupported=()=>!!(window.WebAssembly&&window.Worker&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia&&(window.AudioContext||window.webkitAudioContext));
+function getVosk(){
+  if(voskModel) return Promise.resolve(voskModel);
+  if(!voskLoading) voskLoading=(async()=>{
+    if(!window.Vosk) await loadScript('vosk.js');
+    voskModel=await window.Vosk.createModel('vosk-model-small-ru.tar.gz');
+    return voskModel;
+  })().catch(e=>{voskFailed=true;voskLoading=null;throw e});
+  return voskLoading;
+}
+function voskGrammar(){
+  const set=new Set(SHORT_RU);
+  for(const w of active()) for(const m of w.ru) for(const a of m.split(',')){
+    const raw=a.toLowerCase().replace(/\([^)]*\)/g,' ').replace(/[^а-яё -]/g,' ').replace(/\s+/g,' ').trim();
+    if(raw&&raw.split(' ').length<=3){set.add(raw);set.add(raw.replace(/ё/g,'е'))}
+  }
+  return [...set,'[unk]'];
+}
+function voskListen(){
+  const btn=$('micBtn'), inp=$('ans');
+  hush(); clearTimeout(speakTimer);
+  // audio objects are created right in the click, otherwise browsers keep them muted
+  const AC=window.AudioContext||window.webkitAudioContext, ctx=new AC();
+  const streamP=navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
+  let stream=null, src=null, node=null, recog=null, timer=null, done=false;
+  const cleanup=()=>{if(done)return;done=true;clearTimeout(timer);
+    try{node&&node.disconnect()}catch(e){} try{src&&src.disconnect()}catch(e){}
+    try{stream&&stream.getTracks().forEach(t=>t.stop())}catch(e){} try{ctx.close()}catch(e){} try{recog&&recog.remove()}catch(e){}};
+  const me_={cancelled:false,abort(){cleanup()},stop(){cleanup()}};
+  rec=me_;
+  const live=()=>rec===me_&&!me_.cancelled&&phase==='ask'&&$('micBtn')===btn;
+  btn.classList.add('listening'); $('micLbl').textContent='Подождите'; inp.value=''; inp.placeholder='Включаю микрофон…';
+  if(!voskModel) setStatus('Загружаю распознавание коротких слов. Это нужно один раз на этом устройстве (около 45 МБ)…');
+  Promise.all([getVosk(),streamP]).then(([model,st])=>{
+    stream=st;
+    if(!live()){cleanup();return}
+    try{ctx.resume&&ctx.resume()}catch(e){}
+    src=ctx.createMediaStreamSource(stream);
+    recog=new model.KaldiRecognizer(ctx.sampleRate,JSON.stringify(voskGrammar()));
+    let unk=false;
+    recog.on('partialresult',m=>{if(!live())return;const p=String(m.result&&m.result.partial||'').replace(/\[unk\]/g,'').trim();if(p){if(!firstAt)firstAt=Date.now();inp.value=p}});
+    recog.on('result',m=>{
+      if(!live())return;
+      const raw=String(m.result&&m.result.text||''), t=raw.replace(/\[unk\]/g,'').replace(/\s+/g,' ').trim();
+      if(!t){ if(raw.includes('[unk]')) unk=true; return; }
+      if(!firstAt) firstAt=Date.now();
+      cleanup(); rec=null; resetMic(); process([t],t);
+    });
+    node=ctx.createScriptProcessor(4096,1,1);
+    node.onaudioprocess=e=>{if(!done)try{recog.acceptWaveform(e.inputBuffer)}catch(err){}};
+    src.connect(node); node.connect(ctx.destination);
+    $('micLbl').textContent='Слушаю'; inp.placeholder='Слушаю…'; setStatus('Говорите перевод');
+    timer=setTimeout(()=>{ if(!live())return; cleanup(); rec=null; resetMic();
+      setStatus(unk?'Не разобрал ответ. Нажмите микрофон и скажите ещё раз или напишите.':'Ничего не услышал. Нажмите микрофон и скажите ещё раз.',true); },7000);
+  }).catch(err=>{
+    cleanup(); if(rec===me_) rec=null; resetMic();
+    if(err&&(err.name==='NotAllowedError'||err.name==='SecurityError')){setStatus('Нет доступа к микрофону. Разрешите его в настройках браузера или напишите ответ.',true);return}
+    if(err&&err.name==='NotFoundError'){setStatus('Микрофон не найден.',true);return}
+    // the offline recognizer could not start: fall back to the browser's own
+    voskFailed=true; setStatus('Не удалось загрузить распознавание коротких слов, включаю обычное. Короткое слово лучше сказать фразой: «предлог в».',true);
+    if(phase==='ask') setTimeout(toggleMic,300);
+  });
+}
+
 /* ---------- The cycle ---------- */
 let cur=null, phase='start', speakTimer=null, shownAt=0, firstAt=0;
 const card=$('view-train');
@@ -1176,7 +1359,9 @@ function renderStart(){
   card.innerHTML=`<div class="meta">${active().length} слов в тренировке${arch?' · '+arch+' в архиве':''}</div>
     <p class="intro">Программа покажет и произнесёт английское слово. Скажите перевод по-русски в микрофон или напишите его в поле и нажмите Enter. Чем быстрее верный ответ, тем больше растёт рейтинг слова.</p>
     <button class="btn big" id="startBtn" type="button">Начать</button>`;
-  $('startBtn').onclick=()=>{sessStart=Date.now();nextWord()}; $('startBtn').focus();
+  $('startBtn').onclick=()=>{sessStart=Date.now();
+    if(voskSupported()&&!voskFailed&&active().some(shortAnswer)) getVosk().catch(()=>{});   // load the short-word recognizer in the background
+    nextWord()}; $('startBtn').focus();
 }
 function nextWord(){
   stopRec(); hush(); clearTimeout(speakTimer);
@@ -1200,12 +1385,15 @@ function nextWord(){
   if(matchMedia('(pointer:fine)').matches) $('ans').focus();   // on phones don't pop the keyboard over the word
   shownAt=Date.now();
   speakTimer=setTimeout(()=>{if(phase==='ask'&&!rec)speak(cur.en)},SPEAK_DELAY);
+  // get the example sentence and its picture ready while the learner is thinking
+  const w=cur; ensureExample(w).then(ex=>{if(ex)warmPicture(ex,w.k)});
 }
 function setStatus(t,err){const s=$('status');if(s){s.textContent=t;s.classList.toggle('err',!!err)}}
 let listenTimer=null;
 function toggleMic(){
   if(phase!=='ask') return;
   if(rec){stopRec();resetMic();setStatus('');return}
+  if(shortAnswer(cur)&&!voskFailed&&voskSupported()){voskListen();return}
   if(!Rec){setStatus('Этот браузер не распознаёт речь. Откройте страницу в Chrome, Edge или Safari, либо напишите ответ.',true);return}
   hush(); clearTimeout(speakTimer);
   const inp=$('ans'), btn=$('micBtn'); inp.value='';
@@ -1276,15 +1464,19 @@ function process(answers,shown,idk){
   }
   $('meta').innerHTML=practice?metaHTML(cur):`${meter(cur.r)}<span>показано ${cur.seen} раз</span>`;
   $('form').remove(); document.querySelector('.actions').remove(); $('status').remove();
-  const exm=!ok&&(cur.ex&&cur.ex.en?cur.ex:EXAMPLES[cur.en]);
+  const exm=!ok?exampleOf(cur):null, exWait=!ok&&exPending.has(cur.k);
   card.insertAdjacentHTML('beforeend',`<div class="verdict ${ok?'ok':'bad'}"><b>${ok?'Правильно':idk?'Запомните':'Неправильно'}</b>
       <div class="meanings">${cur.ru.map(esc).join('; ')}</div>${idk?'':`<span class="your">Ваш ответ: ${esc(shown)}</span>`}
-      ${exm?`<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" lang="en">${esc(exm.en)}</span><span class="ex-ru">${esc(exm.ru)}</span></button>`:''}
+      <div id="exBox">${exWait&&(!exm||needsExample(cur))?'<p class="ex-wait">Подбираю пример…</p>':''}</div>
       <span class="delta">${note}</span></div>
     <button class="btn big" id="nextBtn" type="button">Далее</button>
     <p class="status err" id="saveErr" hidden>Результат не сохранился: нет связи с сервером.</p>`);
   const nb=$('nextBtn'); nb.onclick=nextWord; nb.focus();
-  if(exm){$('exBtn').onclick=()=>speak(exm.en);speakTimer=setTimeout(()=>{if(phase==='result')speak(exm.en)},400)}
+  if(!ok){
+    const w=cur;
+    if(exWait) ensureExample(w).then(ex=>{if(phase==='result'&&cur&&cur.k===w.k)showExample(ex||exm,w.k)});
+    else showExample(exm,w.k);
+  }
 }
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&phase==='result'&&view==='train'&&e.target.tagName!=='BUTTON'){e.preventDefault();nextWord()}
