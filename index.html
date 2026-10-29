@@ -149,6 +149,8 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
 .ru-edit.saved{outline:2px solid var(--ok)} .ru-edit.err{outline:2px solid var(--bad)}
 .del{border:0;background:none;color:var(--bad);font:inherit;font-size:.78rem;cursor:pointer;padding:2px 0;text-decoration:underline;text-underline-offset:3px}
 .ex-lvl{font-size:.72rem;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-top:2px}
+.ex-en,.ex-ru{transition:font-weight .1s}
+.example .reading{font-weight:700;color:var(--ink)}
 .ex-wait{margin:6px 0 0;font-size:.85rem;color:var(--muted)}
 .illus{margin:10px 0 0;position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1px solid var(--line);aspect-ratio:640/420;max-width:100%;display:grid;place-items:center}
 .illus img{width:100%;height:100%;object-fit:contain;background:#fff;display:block;opacity:0;transition:opacity .3s;grid-area:1/1}
@@ -194,7 +196,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 15</p>
+    <p class="intro" style="font-size:.75rem">версия 16</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -1497,23 +1499,42 @@ const warmed=new Set();
 function warmPicture(ex){const u=ex&&ex.img&&ex.img.thumb;if(!u||warmed.has(u))return;warmed.add(u);const im=new Image();im.referrerPolicy='no-referrer';im.src=u}
 function exampleHTML(ex){
   const im=ex.img;
-  return `<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" lang="en">${esc(ex.en)}</span><span class="ex-ru">${esc(ex.ru||'')}</span>${ex.lvl?`<span class="ex-lvl">${LEVEL_NAME[ex.lvl]}</span>`:''}</button>
-    ${!im&&ex.noimg?'<p class="credit">Подходящую картинку найти не удалось.</p>':''}
-    ${im?`<figure class="illus" id="illus"><span class="illus-wait" id="illusWait">Загружаю картинку…</span><img id="illusImg" alt="${esc(im.title||'Иллюстрация к фразе')}" referrerpolicy="no-referrer" src="${esc(im.thumb)}"></figure>
-    <p class="credit">${im.link?`<a href="${esc(im.link)}" target="_blank" rel="noopener">${esc(im.title||'Иллюстрация')}</a>`:esc(im.title||'Иллюстрация')}${im.by?' · '+esc(im.by):''}${im.lic?' · '+esc(im.lic):''} · ${esc(im.src||'Openverse')}</p>`:''}`;
+  const credit=im?[im.title,im.by,im.lic,im.src].filter(Boolean).join(' · '):'';
+  return `<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" id="exEn" lang="en">${esc(ex.en)}</span>${ex.ru?`<span class="ex-ru" id="exRu" lang="ru">${esc(ex.ru)}</span>`:''}</button>
+    ${im?`<figure class="illus" id="illus" title="${esc(credit)}"><img id="illusImg" alt="" referrerpolicy="no-referrer" src="${esc(im.thumb)}"></figure>`:''}`;
 }
-function showExample(ex){
+/* the example is read aloud: English first, then Russian; the phrase being read is bold */
+let readToken=0;
+function pickVoice(lang){
+  try{const all=speechSynthesis.getVoices(), pre=lang.slice(0,2);
+    return all.find(v=>v.lang&&v.lang.replace('_','-').toLowerCase()===lang.toLowerCase())||all.find(v=>v.lang&&v.lang.toLowerCase().startsWith(pre))||null}catch(e){return null}
+}
+function speakLang(text,lang,done){
+  let finished=false;
+  const end=()=>{if(finished)return;finished=true;clearTimeout(t);done()};
+  const t=setTimeout(end,3000+text.length*120);     // in case the browser never reports the end
+  try{const u=new SpeechSynthesisUtterance(text);u.lang=lang;u.rate=lang.startsWith('en')?.85:1;
+    const v=pickVoice(lang);if(v)u.voice=v;u.onend=end;u.onerror=end;speechSynthesis.cancel();speechSynthesis.speak(u)}catch(e){end()}
+}
+function readExample(ex,onDone){
+  const tok=++readToken, en=$('exEn'), ru=$('exRu');
+  const mark=el=>{[en,ru].forEach(x=>x&&x.classList.toggle('reading',x===el))};
+  const fin=()=>{if(tok!==readToken)return;mark(null);onDone&&onDone()};
+  mark(en);
+  speakLang(ex.en,'en-US',()=>{
+    if(tok!==readToken) return;
+    if(!ex.ru||!ru){fin();return}
+    mark(ru); speakLang(ex.ru,'ru-RU',fin);
+  });
+}
+function showExample(ex,onDone){
   const box=$('exBox'); if(!box) return;
-  if(!ex){box.innerHTML='';return}
+  if(!ex){box.innerHTML='';onDone&&onDone();return}
   box.innerHTML=exampleHTML(ex);
-  $('exBtn').onclick=()=>speak(ex.en);
+  $('exBtn').onclick=()=>readExample(ex,null);
   const img=$('illusImg');
-  if(img){
-    const wait=$('illusWait'), fig=$('illus');
-    img.onload=()=>{wait.hidden=true;img.classList.add('ready')};
-    img.onerror=()=>{fig.hidden=true;const c=box.querySelector('.credit');if(c)c.hidden=true};
-  }
-  clearTimeout(speakTimer); speakTimer=setTimeout(()=>{if(phase==='result')speak(ex.en)},400);
+  if(img){const fig=$('illus');img.onload=()=>img.classList.add('ready');img.onerror=()=>{fig.hidden=true}}
+  clearTimeout(speakTimer); speakTimer=setTimeout(()=>{if(phase==='result')readExample(ex,onDone)},400);
 }
 
 /* ---------- Short answers (о, в, и, на…) by voice: offline recognizer with a closed word list ----------
@@ -1622,7 +1643,7 @@ function renderStart(){
     nextWord()}; $('startBtn').focus();
 }
 function nextWord(){
-  stopRec(); hush(); clearTimeout(speakTimer);
+  readToken++; stopRec(); hush(); clearTimeout(speakTimer);
   if(!active().length){renderStart();return}
   cur=pick(); recent.push(cur.k); while(recent.length>Math.min(4,active().length-1)) recent.shift();
   phase='ask'; firstAt=0; ansMode=''; micAt=0; saidAt=0; saidEnd=0;
@@ -1732,22 +1753,28 @@ function process(answers,shown,idk){
   $('meta').innerHTML=practice?metaHTML(cur):`${meter(cur.r)}<span>показано ${cur.seen} раз</span>`;
   $('form').remove(); document.querySelector('.actions').remove(); $('status').remove();
   const exm=!ok?exampleOf(cur):null, exWait=!ok&&needsExample(cur);
-  card.insertAdjacentHTML('beforeend',`<div class="verdict ${ok?'ok':'bad'}"><b>${ok?'Правильно':idk?'Запомните':'Неправильно'}</b>
-      <div class="meanings">${cur.ru.map(esc).join('; ')}</div>${idk?'':`<span class="your">Ваш ответ: ${esc(shown)}</span>`}
-      <div id="exBox">${exWait&&!exm?'<p class="ex-wait">Подбираю пример…</p>':''}</div>
-      <span class="delta">${note}</span></div>
-    <button class="btn big" id="nextBtn" type="button">Далее</button>
+  card.insertAdjacentHTML('beforeend',ok
+    ?`<div class="verdict ok"><b>Правильно</b>
+      <div class="meanings">${cur.ru.map(esc).join('; ')}</div><span class="your">Ваш ответ: ${esc(shown)}</span>
+      <span class="delta">${note}</span></div>`
+    // a wrong answer shows only the right answer and the example in English and Russian
+    :`<div class="verdict bad"><div class="meanings">${cur.ru.map(esc).join('; ')}</div>
+      <div id="exBox">${exWait?'<p class="ex-wait">Подбираю пример…</p>':''}</div></div>`);
+  card.insertAdjacentHTML('beforeend',`<button class="btn big" id="nextBtn" type="button"${ok?'':' hidden'}>Далее</button>
     <p class="status err" id="saveErr" hidden>Результат не сохранился: нет связи с сервером.</p>`);
-  const nb=$('nextBtn'); nb.onclick=nextWord; nb.focus();
-  if(!ok){
-    const w=cur;
-    if(exm) showExample(exm);
-    // a phrase made from a picture may still be on its way: show it as soon as it arrives
-    if(exWait) ensureExample(w).then(ex=>{if(ex&&ex!==exm&&ex.en&&phase==='result'&&cur&&cur.k===w.k)showExample(ex)});
-  }
+  const nb=$('nextBtn'); nb.onclick=nextWord;
+  if(ok){nb.focus();return}
+  // «Далее» appears only after the example has been read aloud
+  const w=cur, reveal=()=>{if(phase==='result'&&cur&&cur.k===w.k&&$('nextBtn')===nb){nb.hidden=false;nb.focus()}};
+  if(!exWait){showExample(exm,reveal);return}
+  // a phrase made from a picture may still be on its way: wait for it a little, otherwise use the one we have
+  let shown_=false;
+  const go=ex=>{if(shown_||phase!=='result'||!cur||cur.k!==w.k)return;shown_=true;showExample(ex&&ex.en?ex:exm,reveal)};
+  ensureExample(w).then(go,()=>go(null));
+  setTimeout(()=>go(null),6000);
 }
 document.addEventListener('keydown',e=>{
-  if(e.key==='Enter'&&phase==='result'&&view==='train'&&e.target.tagName!=='BUTTON'){e.preventDefault();nextWord()}
+  if(e.key==='Enter'&&phase==='result'&&view==='train'&&e.target.tagName!=='BUTTON'){e.preventDefault();const nb=$('nextBtn');if(nb&&!nb.hidden)nextWord()}
 });
 </script>
 </body>
