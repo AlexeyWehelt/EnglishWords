@@ -155,6 +155,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
 .illus{margin:10px 0 0;position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1px solid var(--line);aspect-ratio:640/420;max-width:100%;display:grid;place-items:center}
 .illus img{width:100%;height:100%;object-fit:contain;background:#fff;display:block;opacity:0;transition:opacity .3s;grid-area:1/1}
 .illus img.ready{opacity:1}
+.illus .emo{grid-area:1/1;font-size:clamp(3.5rem,16vw,5.5rem);line-height:1.1;letter-spacing:.08em;font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif;text-align:center;padding:10px}
 .illus-wait{grid-area:1/1;font-size:.82rem;color:var(--muted)}
 .credit{margin:4px 0 0;font-size:.68rem;color:var(--muted);overflow-wrap:anywhere}
 .credit a{color:inherit}
@@ -196,7 +197,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 17</p>
+    <p class="intro" style="font-size:.75rem">версия 18</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -322,6 +323,124 @@ word|слово
 work|работа; работать
 print|печатать; печать
 woman|женщина`;
+/* Emoji picture to each built-in sentence: drawn by the computer's own emoji font, needs no internet */
+const EMO_SRC = `about|🗣️🎵
+after|🏫➡️⚽
+already|🍽️✅
+also|🙋🐱
+always|😊
+and|🐱➕🐶
+any|❓🙋
+at|🏫
+because|🏠❄️
+before|🧼🙌🍲
+but|😫😄
+each|👧📘👦📗
+then|🥣➡️⚽
+else|🛒❓
+for|🎁👉
+in|📦🐱
+just|😴🛏️
+like|🍎❤️
+near|🏪🏠
+never|🚫🐟
+of|☕
+often|🌳🚶
+on|📖🪑
+only|☝️🖊️
+or|🍵❓☕
+out|🚪🌳
+some|💧🥛
+soon|👋⏳
+today|📅☀️
+to|🚶➡️🏫
+usually|⏰7️⃣
+here|👋🙋
+how|👋😊❓
+that|👉🚲
+there|👉🏡
+these|🍎🍎🍎
+this|🛏️🏠
+those|🐦🐦📢
+what|❓🤔
+when|⏰❓
+where|📱❓
+who|👦❓
+why|😢❓
+answer|🙋💬
+ask|🙋❓
+bore|🥱🎬
+check|✅📝
+come|🎉🙋
+complete|🧩✅
+do|📚✏️
+download|⬇️🎮
+draw|✏️🐱
+drink|🥛
+eat|🍲🥄
+get|📬✉️
+give|🤲⚽
+go|🚶🏠
+have|👧👦
+know|💡🙋
+listen|🎧🎵
+live|🏙️🏠
+look|👀☁️
+love|👩❤️👦
+make|🎂👩‍🍳
+move|🚫🏃
+need|🆘🙋
+put|📖➡️🗄️
+run|🏃💨
+say|👋💬
+see|👀🐦
+send|📸📤
+set|⏰7️⃣
+sing|🎤🎶
+sleep|👶😴
+speak|🗣️🇬🇧
+study|🏫📚
+swim|🐟🌊
+take|🤝
+talk|🗣️💬🗣️
+tell|📖🗣️
+think|🤔💭
+use|✏️
+want|🍦😋
+watch|📺👀
+arrow|➡️🧭
+bad|🌧️⛈️
+child|🧒🧸
+children|🧒👧🏫
+date|📅❓
+family|👨‍👩‍👧‍👦
+fast|🏎️💨
+favorite|💙
+good|📗👍
+great|💡🤩
+home|🚶🏠
+later|👋🕒
+lesson|🏫🕘
+letter|✍️✉️
+life|🌸☀️
+man|🧍‍♂️📏
+page|📖🔟
+paper|📄
+parents|👨👩💼
+poor|🐱😿
+ready|🏁🙋
+room|🛏️
+science|🔬🧪
+screen|👀🖥️
+sentence|📖👀
+slow|🐢
+sometimes|📚🦸
+song|🎵👍
+time|🕒❓
+word|✍️🔤
+work|👨💼🏢
+print|🖨️🖼️
+woman|👩‍🏫`;
 /* Search words for a picture to each built-in sentence */
 const IMGQ_SRC = `about|friends talking
 after|children playing
@@ -671,7 +790,7 @@ function enter(){
   $('view-login').hidden=true; $('menu').hidden=false; $('lamp').hidden=false; $('bar').hidden=false;
   $('whoName').textContent=myName; sess=null; sessStart=null;
   let first=true;
-  Promise.all([getCommon(),getLevels(),getRank()]).catch(()=>{});
+  Promise.all([getCommon(),getLevels(),getRank(),getEmojiIndex()]).catch(()=>{});
   let seeded=false;
   B.watch(me,u=>{
     const map=u.words||{};
@@ -1394,6 +1513,40 @@ const seedOf=s=>{let h=7;for(const ch of s)h=(h*31+ch.charCodeAt(0))>>>0;return 
    2) the AI looks at the picture and writes a sentence with the word that describes it, at the word's level;
    if the AI is not available, the built-in or earlier sentence is shown with the picture. */
 const IMGQ={};IMGQ_SRC.split('\n').forEach(l=>{const[a,b]=l.split('|');if(a&&b)IMGQ[a.trim()]=b.trim()});
+const EMO={};EMO_SRC.split('\n').forEach(l=>{const[a,b]=l.split('|');if(a&&b)EMO[a.trim()]=b.trim()});
+/* emoji by keyword (Unicode CLDR names and keywords), for words outside the base set */
+let EMOJI_IDX=null;
+async function getEmojiIndex(){
+  if(EMOJI_IDX) return EMOJI_IDX;
+  const idx=[];
+  try{const r=await fetch('emoji-index.txt');if(r.ok)(await r.text()).split('\n').forEach(l=>{const[e,k]=l.split('\t');if(e&&k){const kw=k.split('|');idx.push({e,name:kw[0],kw})}})}catch(e){}
+  EMOJI_IDX=idx; return idx;
+}
+const isEmoji=s=>typeof s==='string'&&/\p{Extended_Pictographic}/u.test(s)&&!/[A-Za-zА-Яа-яЁё]/.test(s)&&s.length<=24;
+function emojiByWords(tokens,minScore=3){
+  if(!EMOJI_IDX||!EMOJI_IDX.length) return '';
+  const out=[];
+  for(const t of tokens){
+    if(!t||t.length<3||SKIPW.has(t)) continue;
+    let best=null,bs=0;
+    for(const x of EMOJI_IDX){
+      let sc=0;
+      if(x.name===t) sc=10; else if(x.name.split(' ').includes(t)) sc=6; else if(x.kw.includes(t)) sc=3;
+      if(sc>=minScore&&(sc>bs||(sc===bs&&x.name.length<best.name.length))){bs=sc;best=x}
+    }
+    if(best&&!out.includes(best.e)) out.push(best.e);
+    if(out.length>=2) break;
+  }
+  return out.join('');
+}
+function emojiFor(w,ex){
+  if(EMO[w.en]) return EMO[w.en];
+  if(ex&&isEmoji(ex.emoji)) return ex.emoji;
+  // the word itself may match a keyword; words of the sentence only by an emoji's own name
+  const own=emojiByWords(w.en.split(' ').map(t=>lemma(t)||t),3);
+  if(own) return own;
+  return emojiByWords((String(ex&&ex.en||'').toLowerCase().match(/[a-z]+/g)||[]).map(t=>lemma(t)||t),6);
+}
 const EX_V=2;
 function exampleOf(w){
   if(w.ex&&w.ex.en&&w.ex.v===EX_V) return w.ex;
@@ -1462,9 +1615,9 @@ async function genExample(w){
     const j=await askText(`You help a Russian-speaking learner of English.
 The ${kind}: "${w.en}" (meaning: ${mean}).
 Write ONE good-natured English sentence that uses this ${kind} in this meaning. Difficulty: ${LEVEL_SPEC[lvl]}.
-Give an accurate Russian translation, and 1–3 simple concrete English search words for finding a clear illustration of the sentence (objects or people, not abstract ideas).
-Reply with JSON only: {"en": "...", "ru": "...", "img_query": "..."}`,seed);
-    if(okSentence(j)) base={en:j.en.trim().slice(0,300),ru:j.ru.trim().slice(0,300),lvl,src:'gen'};
+Give an accurate Russian translation, 1–3 simple concrete English search words for finding a clear illustration of the sentence (objects or people, not abstract ideas), and 1–3 emoji that illustrate the sentence.
+Reply with JSON only: {"en": "...", "ru": "...", "img_query": "...", "emoji": "..."}`,seed);
+    if(okSentence(j)) base={en:j.en.trim().slice(0,300),ru:j.ru.trim().slice(0,300),lvl,src:'gen',...(isEmoji(j.emoji)?{emoji:j.emoji.trim()}:{})};
     q=(j&&typeof j.img_query==='string'&&j.img_query.trim())||lemma(w.en.split(' ').pop())||w.en;
   }
   const img=await findPicture(q);
@@ -1474,12 +1627,14 @@ Reply with JSON only: {"en": "...", "ru": "...", "img_query": "..."}`,seed);
   if(img){
     const j=await askAboutPicture(`You help a Russian-speaking learner of English. Look at the picture.
 Write ONE funny, good-natured English sentence that describes what is in this picture and uses the ${kind} "${w.en}" in the meaning "${mean}". Difficulty: ${LEVEL_SPEC[lvl]}.
-Give an accurate Russian translation. Reply with JSON only: {"en": "...", "ru": "..."}`,img.thumb,seed);
-    if(okSentence(j)) base={en:j.en.trim().slice(0,300),ru:j.ru.trim().slice(0,300),lvl,src:'pic'};
+Give an accurate Russian translation and 1–3 emoji that illustrate the sentence. Reply with JSON only: {"en": "...", "ru": "...", "emoji": "..."}`,img.thumb,seed);
+    if(okSentence(j)) base={en:j.en.trim().slice(0,300),ru:j.ru.trim().slice(0,300),lvl,src:'pic',...(isEmoji(j.emoji)?{emoji:j.emoji.trim()}:(base&&base.emoji?{emoji:base.emoji}:{}))};
   }
   if(!base) return null;
   // saved only together with a picture, so a network failure is retried next time
-  return img?{en:base.en,ru:base.ru||'',lvl:base.lvl||lvl,src:base.src||'gen',img,v:EX_V}:{...base,noimg:true};
+  await getEmojiIndex();
+  const emoji=emojiFor(w,base);
+  return img?{en:base.en,ru:base.ru||'',lvl:base.lvl||lvl,src:base.src||'gen',img,v:EX_V,...(emoji?{emoji}:{})}:{...base,noimg:true,...(emoji?{emoji}:{})};
 }
 /* one request at a time: the free services limit how often they can be asked */
 let exChain=Promise.resolve(); const exPending=new Map(), exEarly=new Map(), exEarlyCb=new Map();
@@ -1500,11 +1655,23 @@ function ensureExample(w){
 }
 const warmed=new Set();
 function warmPicture(ex){const u=ex&&ex.img&&ex.img.thumb;if(!u||warmed.has(u))return;warmed.add(u);const im=new Image();im.referrerPolicy='no-referrer';im.src=u}
+/* The picture: emoji drawn by the computer's own font are shown at once and work without internet;
+   a real illustration from Wikimedia replaces them when it loads (if the network lets it through). */
+const imgTag=im=>`<img id="illusImg" alt="" referrerpolicy="no-referrer" src="${esc(im.thumb)}">`;
+const creditOf=im=>im?[im.title,im.by,im.lic,im.src].filter(Boolean).join(' · '):'';
+function figureHTML(ex,emo){
+  const im=ex.img; if(!im&&!emo) return '';
+  return `<figure class="illus" id="illus" title="${esc(creditOf(im))}">${emo?`<div class="emo" id="illusEmo" aria-hidden="true">${esc(emo)}</div>`:''}${im?imgTag(im):''}</figure>`;
+}
+function bindPicture(){
+  const img=$('illusImg'), fig=$('illus'), em=$('illusEmo'); if(!img) return;
+  img.onload=()=>{img.classList.add('ready');if(em)em.hidden=true};
+  img.onerror=()=>{img.remove();if(!em)fig.hidden=true};
+  setTimeout(()=>{if(img.isConnected&&!img.classList.contains('ready')&&em)img.remove()},10000);   // a blocked request may never answer
+}
 function exampleHTML(ex){
-  const im=ex.img;
-  const credit=im?[im.title,im.by,im.lic,im.src].filter(Boolean).join(' · '):'';
   return `<button class="example" id="exBtn" type="button" title="Послушать ещё раз"><span class="ex-en" id="exEn" lang="en">${esc(ex.en)}</span>${ex.ru?`<span class="ex-ru" id="exRu" lang="ru">${esc(ex.ru)}</span>`:''}</button>
-    ${im?`<figure class="illus" id="illus" title="${esc(credit)}"><img id="illusImg" alt="" referrerpolicy="no-referrer" src="${esc(im.thumb)}"></figure>`:''}`;
+    ${figureHTML(ex,cur?emojiFor(cur,ex):'')}`;
 }
 /* the example is read aloud: English first, then Russian; the phrase being read is bold */
 let readToken=0;
@@ -1531,18 +1698,18 @@ function readExample(ex,onDone){
   });
 }
 function addPicture(im){
-  const box=$('exBox'); if(!box||!im) return;
-  const credit=[im.title,im.by,im.lic,im.src].filter(Boolean).join(' · ');
-  box.insertAdjacentHTML('beforeend',`<figure class="illus" id="illus" title="${esc(credit)}"><img id="illusImg" alt="" referrerpolicy="no-referrer" src="${esc(im.thumb)}"></figure>`);
-  const img=$('illusImg'), fig=$('illus'); img.onload=()=>img.classList.add('ready'); img.onerror=()=>{fig.hidden=true};
+  const box=$('exBox'); if(!box||!im||$('illusImg')) return;
+  const fig=$('illus');
+  if(fig){fig.title=creditOf(im);fig.hidden=false;fig.insertAdjacentHTML('beforeend',imgTag(im))}
+  else box.insertAdjacentHTML('beforeend',`<figure class="illus" id="illus" title="${esc(creditOf(im))}">${imgTag(im)}</figure>`);
+  bindPicture();
 }
 function showExample(ex,onDone){
   const box=$('exBox'); if(!box) return;
   if(!ex){box.innerHTML='';onDone&&onDone();return}
   box.innerHTML=exampleHTML(ex);
   $('exBtn').onclick=()=>readExample(ex,null);
-  const img=$('illusImg');
-  if(img){const fig=$('illus');img.onload=()=>img.classList.add('ready');img.onerror=()=>{fig.hidden=true}}
+  bindPicture();
   clearTimeout(speakTimer); speakTimer=setTimeout(()=>{if(phase==='result')readExample(ex,onDone)},400);
 }
 
@@ -1784,7 +1951,7 @@ function process(answers,shown,idk){
   const go=ex=>{
     if(!here()) return;
     if(!shownEx){ if(ex&&ex.en) show(ex); return; }
-    if(ex&&ex.img&&!shownEx.img&&!$('illus')) addPicture(ex.img);
+    if(ex&&ex.img&&!shownEx.img&&!$('illusImg')) addPicture(ex.img);
   };
   if(exEarly.has(w.k)) go(exEarly.get(w.k)); else exEarlyCb.set(w.k,go);
   // other words may be ahead in the queue: look for a picture to the phrase we already have right now
