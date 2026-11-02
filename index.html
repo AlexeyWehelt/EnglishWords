@@ -192,7 +192,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
     <span class="who"><b id="whoName"></b><button class="linkish" id="logout" type="button">Выйти</button></span>
   </nav>
   <div class="practice" id="practiceBar" role="status" hidden>
-    <span><b>Режим без статистики.</b> Ответы не меняют рейтинг слов и не записываются в занятия. Чтобы выйти, нажмите N дважды.</span>
+    <span><b>Режим без статистики.</b> Ответы не меняют рейтинг слов и не записываются в занятия. Чтобы выйти, нажмите F12.</span>
     <button class="linkish" id="practiceOff" type="button">Выйти из режима</button>
     <div class="range-set">
       <span class="range-lbl">Диапазон приоритета слова:</span>
@@ -213,7 +213,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 19</p>
+    <p class="intro" style="font-size:.75rem">версия 20</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -698,7 +698,7 @@ EXAMPLES_SRC.split('\n').forEach(l=>{const [w,en,ru]=l.split('|');if(w&&en&&ru)E
 const SEED_ACCOUNTS = ['юра','папа'];        // these new accounts start with the base word set; others start empty
 /* Rating: a new word is 0 (neutral). A right answer adds up to +1 (less the longer the pause before answering),
    a wrong answer or "Не знаю" takes 1 away. The scale runs from -5 to +5; from +3 a word counts as learned. */
-/* Priority range: the rating runs from −RANGE to +RANGE (5 by default, set per account in the NN panel).
+/* Priority range: the rating runs from −RANGE to +RANGE (5 by default, set per account in the F12 panel).
    A word counts as learned from 60% of the top; above the top it goes to the archive. */
 let RANGE = 5, RMIN = -5, RMAX = 5, LEARNED = 3;
 function setRangeVars(n){ RANGE=n; RMIN=-n; RMAX=n; LEARNED=Math.max(1,Math.round(n*.6)); }
@@ -849,23 +849,20 @@ function show(v){
 }
 VIEWS.forEach(n=>$('tab-'+n).onclick=()=>show(n));
 
-/* ---------- Practice mode: press N twice; answers don't change ratings or lessons ---------- */
-let practice=false, lastN=0, beforeN=null;
+/* ---------- Practice mode: F12; answers don't change ratings or lessons ---------- */
+let practice=false;
 function setPractice(on){
   practice=on; $('practiceBar').hidden=!on; if(on){rangeDraft=RANGE;renderRange()}
   const m=$('meta'); if(m&&cur&&phase==='ask') m.innerHTML=metaHTML(cur);
 }
 document.addEventListener('keydown',e=>{
-  if(e.code!=='KeyN'||e.ctrlKey||e.metaKey||e.altKey||!me) return;
-  const inp=e.target&&e.target.id==='ans'?e.target:null, now=Date.now();
-  if(now-lastN<450){
-    e.preventDefault(); if(inp&&beforeN!==null) inp.value=beforeN;   // drop the letter typed by the first press
-    lastN=0; beforeN=null; setPractice(!practice);
-  } else { lastN=now; beforeN=inp?inp.value:null; }
+  // F12 toggles the practice mode (a key nobody presses while typing an answer); phones have no such mode
+  if(e.key!=='F12'||e.ctrlKey||e.metaKey||e.altKey||e.shiftKey||!me) return;
+  e.preventDefault(); setPractice(!practice);
 },true);
 $('practiceOff').onclick=()=>setPractice(false);
 
-/* range setting (shown in the NN panel) */
+/* range setting (shown in the F12 panel) */
 let rangeDraft=5;
 function renderRange(){
   $('rangeVal').textContent=`от −${rangeDraft} до +${rangeDraft}`;
