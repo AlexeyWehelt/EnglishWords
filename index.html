@@ -163,7 +163,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
 .credit a{color:inherit}
 .range-set{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px dashed var(--line);padding-top:8px}
 .range-ctl{display:inline-flex;align-items:center;gap:8px}
-.range-ctl b{min-width:8.5em;text-align:center;font-variant-numeric:tabular-nums}
+.range-ctl b{min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
 .btn.sm{padding:4px 12px;font-size:.9rem;border-radius:8px}
 .range-note{flex-basis:100%;font-size:.82rem;color:var(--muted)}
 .empty{color:var(--muted);text-align:center;padding:18px 0;margin:0}
@@ -198,9 +198,12 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
     <button class="linkish" id="practiceOff" type="button">Выйти из режима</button>
     <div class="range-set">
       <span class="range-lbl">Диапазон приоритета слова:</span>
-      <span class="range-ctl"><button class="btn plain sm" id="rangeMinus" type="button" aria-label="Уменьшить диапазон">−</button>
-        <b id="rangeVal">от −5 до +5</b>
-        <button class="btn plain sm" id="rangePlus" type="button" aria-label="Увеличить диапазон">+</button></span>
+      <span class="range-ctl">от <button class="btn plain sm" id="loMinus" type="button" aria-label="Опустить нижнюю границу">−</button>
+        <b id="loVal">−5</b>
+        <button class="btn plain sm" id="loPlus" type="button" aria-label="Поднять нижнюю границу">+</button></span>
+      <span class="range-ctl">до <button class="btn plain sm" id="hiMinus" type="button" aria-label="Опустить верхнюю границу">−</button>
+        <b id="hiVal">+5</b>
+        <button class="btn plain sm" id="hiPlus" type="button" aria-label="Поднять верхнюю границу">+</button></span>
       <button class="btn sm" id="rangeApply" type="button" hidden>Применить</button>
       <span class="range-note" id="rangeNote"></span>
     </div>
@@ -215,7 +218,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 21</p>
+    <p class="intro" style="font-size:.75rem">версия 22</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -700,10 +703,10 @@ EXAMPLES_SRC.split('\n').forEach(l=>{const [w,en,ru]=l.split('|');if(w&&en&&ru)E
 const SEED_ACCOUNTS = ['юра','папа'];        // these new accounts start with the base word set; others start empty
 /* Rating: a new word is 0 (neutral). A right answer adds up to +1 (less the longer the pause before answering),
    a wrong answer or "Не знаю" takes 1 away. The scale runs from -5 to +5; from +3 a word counts as learned. */
-/* Priority range: the rating runs from −RANGE to +RANGE (5 by default, set per account in the F12 panel).
+/* Priority range: the rating runs from RMIN to RMAX (−5…+5 by default; both ends are set per account in the F12 panel).
    A word counts as learned from 60% of the top; above the top it goes to the archive. */
 let RANGE = 5, RMIN = -5, RMAX = 5, LEARNED = 3;
-function setRangeVars(n){ RANGE=n; RMIN=-n; RMAX=n; LEARNED=Math.max(1,Math.round(n*.6)); }
+function setRangeVars(lo,hi){ RMIN=-lo; RMAX=hi; RANGE=hi; LEARNED=Math.max(1,Math.round(hi*.6)); }
 const FAST = 3, SLOW = 15;            // seconds: answered within FAST -> full +1; after SLOW -> only +0.1
 const PENALTY = 1;
 const SESSION_GAP = 30*60*1000;       // a pause longer than this starts a new lesson in "Занятия"
@@ -816,7 +819,9 @@ function enter(){
   Promise.all([getCommon(),getLevels(),getRank(),getEmojiIndex()]).catch(()=>{});
   let seeded=false;
   B.watch(me,u=>{
-    { const rg=Math.round(num(u.settings&&u.settings.range)); setRangeVars(rg>=1&&rg<=20?rg:5); }
+    { const st=u.settings||{}, ok=v=>v>=1&&v<=20, rg=Math.round(num(st.range)), def=ok(rg)?rg:5;
+      const lo=Math.round(num(st.rangeLo)), hi=Math.round(num(st.rangeHi));
+      setRangeVars(ok(lo)?lo:def, ok(hi)?hi:def); }
     const map=u.words||{};
     if(!seeded&&SEED_ACCOUNTS.includes(me)&&!Object.keys(map).length){seeded=true;B.addWords(me,baseWords()).catch(()=>{});}
     answerLog=Object.values(u.log||{}).filter(e=>e&&e.ts).sort((a,b)=>a.ts-b.ts);
@@ -854,7 +859,7 @@ VIEWS.forEach(n=>$('tab-'+n).onclick=()=>show(n));
 /* ---------- Practice mode: F12; answers don't change ratings or lessons ---------- */
 let practice=false;
 function setPractice(on){
-  practice=on; $('practiceBar').hidden=!on; if(on){rangeDraft=RANGE;renderRange()}
+  practice=on; $('practiceBar').hidden=!on; if(on){loDraft=-RMIN;hiDraft=RMAX;renderRange()}
   const m=$('meta'); if(m&&cur&&phase==='ask') m.innerHTML=metaHTML(cur);
 }
 document.addEventListener('keydown',e=>{
@@ -865,33 +870,45 @@ document.addEventListener('keydown',e=>{
 $('practiceOff').onclick=()=>setPractice(false);
 
 /* range setting (shown in the F12 panel) */
-let rangeDraft=5;
+let loDraft=5, hiDraft=5;   // the range is from −loDraft to +hiDraft
 function renderRange(){
-  $('rangeVal').textContent=`от −${rangeDraft} до +${rangeDraft}`;
-  $('rangeMinus').disabled=rangeDraft<=1; $('rangePlus').disabled=rangeDraft>=20;
-  $('rangeApply').hidden=rangeDraft===RANGE;
-  let note='';
-  if(rangeDraft<RANGE){
-    const n=active().filter(w=>w.r>rangeDraft).length;
-    note=n?`В архив уйдут слова с рейтингом выше +${rangeDraft}: ${n}.`:`Слов с рейтингом выше +${rangeDraft} нет, в архив ничего не уйдёт.`;
-  } else if(rangeDraft>RANGE) note='Рейтинги слов останутся как были.';
-  else note=`Слово уходит в архив, когда рейтинг становится выше +${RANGE}; усвоенным считается с +${LEARNED}.`;
-  $('rangeNote').textContent=note;
+  $('loVal').textContent='−'+loDraft; $('hiVal').textContent='+'+hiDraft;
+  $('loMinus').disabled=loDraft>=20; $('loPlus').disabled=loDraft<=1;
+  $('hiMinus').disabled=hiDraft<=1; $('hiPlus').disabled=hiDraft>=20;
+  const lo=-RMIN, hi=RMAX;
+  $('rangeApply').hidden=loDraft===lo&&hiDraft===hi;
+  const notes=[];
+  if(hiDraft<hi){
+    const n=active().filter(w=>w.r>hiDraft).length;
+    notes.push(n?`В архив уйдут слова с рейтингом выше +${hiDraft}: ${n}.`:`Слов с рейтингом выше +${hiDraft} нет, в архив ничего не уйдёт.`);
+  }
+  if(loDraft>lo) notes.push('Нижние рейтинги останутся как были.');
+  if(loDraft<lo){
+    const n=active().filter(w=>w.r<-loDraft).length;
+    if(n) notes.push(`Рейтинг поднимется до −${loDraft} у слов ниже этой границы: ${n}.`);
+  }
+  if(hiDraft>hi) notes.push('Верхние рейтинги останутся как были.');
+  if(!notes.length) notes.push(`Слово уходит в архив, когда рейтинг становится выше +${hi}; усвоенным считается с +${LEARNED}.`);
+  $('rangeNote').textContent=notes.join(' ');
 }
-$('rangeMinus').onclick=()=>{if(rangeDraft>1){rangeDraft--;renderRange()}};
-$('rangePlus').onclick=()=>{if(rangeDraft<20){rangeDraft++;renderRange()}};
+$('loMinus').onclick=()=>{if(loDraft<20){loDraft++;renderRange()}};
+$('loPlus').onclick=()=>{if(loDraft>1){loDraft--;renderRange()}};
+$('hiMinus').onclick=()=>{if(hiDraft>1){hiDraft--;renderRange()}};
+$('hiPlus').onclick=()=>{if(hiDraft<20){hiDraft++;renderRange()}};
 $('rangeApply').onclick=async()=>{
-  const n=rangeDraft, old=RANGE; if(n===old) return;
-  setRangeVars(n);
+  const lo=loDraft, hi=hiDraft, oldLo=-RMIN, oldHi=RMAX; if(lo===oldLo&&hi===oldHi) return;
+  setRangeVars(lo,hi);
   const upd={}, now=Date.now();
-  if(n<old) for(const w of words){
+  for(const w of words){
     if(w.a) continue;
-    if(w.r>n){w.a=now;w.r=n} else if(w.r<-n) w.r=-n; else continue;
+    if(hi<oldHi&&w.r>hi){w.a=now;w.r=hi}
+    else if(lo>=oldLo||w.r>=-lo) continue;
+    else w.r=-lo;
     const {k,...d}=w; upd[k]=d;
   }
-  try{ await B.saveSetting(me,'range',n); if(Object.keys(upd).length) await B.addWords(me,upd); }catch(e){}
+  try{ await B.saveSetting(me,'rangeLo',lo); await B.saveSetting(me,'rangeHi',hi); if(Object.keys(upd).length) await B.addWords(me,upd); }catch(e){}
   progress(); renderRange();
-  $('rangeNote').textContent=`Готово: диапазон от −${n} до +${n}.`+(Object.keys(upd).length?` Изменено слов: ${Object.keys(upd).length}.`:'');
+  $('rangeNote').textContent=`Готово: диапазон от −${lo} до +${hi}.`+(Object.keys(upd).length?` Изменено слов: ${Object.keys(upd).length}.`:'');
   if(view==='stats') renderStats(); else if(phase==='start') renderStart();
 };
 
@@ -923,8 +940,8 @@ function speedFactor(sec,mode){
 const fmtR=r=>(r>0?'+':r<0?'−':'')+Math.abs(r).toFixed(1).replace('.',',');
 const fmtSec=s=>s.toFixed(1).replace('.',',')+' с';
 function meter(r){
-  const w=Math.min(50,Math.abs(r)/RMAX*50);
-  return `<span class="rating"><span class="meter" title="Рейтинг ${fmtR(r)} (от −${RANGE} до +${RANGE})"><i class="${r>=0?'pos':'neg'}" style="${r>=0?'left:50%':'right:50%'};width:${w}%"></i></span><span class="rnum ${r>=LEARNED?'good':r<0?'bad':''}">${fmtR(r)}</span></span>`;
+  const w=Math.min(50,Math.abs(r)/(r>=0?RMAX:-RMIN)*50);
+  return `<span class="rating"><span class="meter" title="Рейтинг ${fmtR(r)} (от −${-RMIN} до +${RMAX})"><i class="${r>=0?'pos':'neg'}" style="${r>=0?'left:50%':'right:50%'};width:${w}%"></i></span><span class="rnum ${r>=LEARNED?'good':r<0?'bad':''}">${fmtR(r)}</span></span>`;
 }
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
