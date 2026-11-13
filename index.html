@@ -62,7 +62,7 @@ input:focus{outline:2px solid var(--accent);border-color:transparent}
 .btn.big{padding:14px 40px;font-size:1.1rem}
 .status{min-height:1.4em;font-size:.88rem;color:var(--muted);margin:0;max-width:42ch}
 .status.err{color:var(--bad)}
-.verdict{width:100%;max-width:420px;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:6px}
+.verdict{width:100%;max-width:760px;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:6px}
 .verdict.ok{background:var(--ok-soft);border:1px solid var(--ok)}
 .verdict.bad{background:var(--bad-soft);border:1px solid var(--bad)}
 .verdict b{font-size:1.15rem}
@@ -152,8 +152,10 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
 .ex-en,.ex-ru{transition:font-weight .1s}
 .example .reading{font-weight:700;color:var(--ink)}
 .ex-wait{margin:6px 0 0;font-size:.85rem;color:var(--muted)}
-.illus{margin:10px 0 0;position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1px solid var(--line);aspect-ratio:640/420;max-width:100%;display:grid;place-items:center}
-.illus img{width:100%;height:100%;object-fit:contain;background:#fff;display:block;opacity:0;transition:opacity .3s;grid-area:1/1}
+.illus{margin:10px 0 0;position:relative;border-radius:10px;overflow:hidden;background:#fff;border:1px solid var(--line);max-width:100%;min-height:150px;display:grid;place-items:center}
+.illus img{display:block;max-width:100%;max-height:min(66vh,620px);width:auto;height:auto;opacity:0;transition:opacity .3s;grid-area:1/1}
+@media (min-width:900px){.wrap{max-width:860px}}
+@media (max-width:700px){.illus img{max-height:46vh}}
 .illus img.ready{opacity:1}
 .illus .emo{grid-area:1/1;font-size:clamp(3.5rem,16vw,5.5rem);line-height:1.1;letter-spacing:.08em;font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif;text-align:center;padding:10px}
 .illus-wait{grid-area:1/1;font-size:.82rem;color:var(--muted)}
@@ -213,7 +215,7 @@ code{font-size:.85em;background:var(--bg);border:1px solid var(--line);border-ra
       <p class="status" id="loginMsg" role="alert"></p>
     </form>
     <p class="intro">Если такого имени ещё нет, будет создан новый аккаунт с этим паролем.</p>
-    <p class="intro" style="font-size:.75rem">версия 20</p>
+    <p class="intro" style="font-size:.75rem">версия 21</p>
   </main>
   <main class="card" id="view-train" aria-live="polite" hidden></main>
   <main class="panel" id="view-stats" hidden></main>
@@ -1635,12 +1637,16 @@ async function askAboutPicture(prompt,imageUrl,seed){
 }
 const BAD_PIC=/\b(map|diagram|chart|graph|logo|flag|coat of arms|emblem|seal|plan|scheme|schema|icon|signature|stamp|document|page|scan|book cover|poster|text|svg)\b/i;
 const stripTags=h=>String(h||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
-async function findPicture(q){
-  for(const kind of ['filetype:bitmap','']){
+/* On a phone a big photo with many details says little: there we look for a simple drawing (clipart, cartoon)
+   that shows the thing or the action large, nearly square. */
+const isPhone=()=>matchMedia('(max-width: 700px)').matches;
+async function findPicture(q,phone){
+  const kinds=phone?['clipart filetype:drawing','cartoon filetype:drawing','filetype:drawing','clipart','filetype:bitmap']:['filetype:bitmap',''];
+  for(const kind of kinds){
     try{
       const url='https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&generator=search&gsrnamespace=6&gsrlimit=15'
         +'&gsrsearch='+encodeURIComponent(q+(kind?' '+kind:''))
-        +'&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=640&iiextmetadatafilter=Artist|LicenseShortName';
+        +'&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth='+(phone?500:960)+'&iiextmetadatafilter=Artist|LicenseShortName';
       const r=await fetchT(url,{},15000); if(!r.ok) continue;
       const d=await r.json();
       const pages=Object.values(d&&d.query&&d.query.pages||{}).sort((x,y)=>(x.index||0)-(y.index||0));
@@ -1648,7 +1654,7 @@ async function findPicture(q){
         const ii=pg.imageinfo&&pg.imageinfo[0]; if(!ii||!ii.thumburl) continue;
         const title=String(pg.title||'').replace(/^File:/,'').replace(/\.[a-z0-9]+$/i,'').replace(/[_-]+/g,' ');
         if(BAD_PIC.test(title)) continue;
-        const ratio=(ii.width||1)/(ii.height||1); if(ratio<.55||ratio>2.2) continue;
+        const ratio=(ii.width||1)/(ii.height||1); if(phone?(ratio<.7||ratio>1.5):(ratio<.55||ratio>2.2)) continue;
         const md=ii.extmetadata||{};
         return {thumb:ii.thumburl,title:title.slice(0,120),by:stripTags(md.Artist&&md.Artist.value).slice(0,80),
           lic:stripTags(md.LicenseShortName&&md.LicenseShortName.value).slice(0,40),link:ii.descriptionurl||'',src:'Wikimedia Commons'};
@@ -1684,7 +1690,7 @@ Give an accurate Russian translation and 1–3 emoji that illustrate the sentenc
   // saved only together with a picture, so a network failure is retried next time
   await getEmojiIndex();
   const emoji=emojiFor(w,base);
-  return img?{en:base.en,ru:base.ru||'',lvl:base.lvl||lvl,src:base.src||'gen',img,v:EX_V,...(emoji?{emoji}:{})}:{...base,noimg:true,...(emoji?{emoji}:{})};
+  return img?{en:base.en,ru:base.ru||'',lvl:base.lvl||lvl,src:base.src||'gen',img,q,v:EX_V,...(emoji?{emoji}:{})}:{...base,noimg:true,...(emoji?{emoji}:{})};
 }
 /* one request at a time: the free services limit how often they can be asked */
 let exChain=Promise.resolve(); const exPending=new Map(), exEarly=new Map(), exEarlyCb=new Map();
@@ -1704,19 +1710,40 @@ function ensureExample(w){
   return p;
 }
 const warmed=new Set();
-function warmPicture(ex){const u=ex&&ex.img&&ex.img.thumb;if(!u||warmed.has(u))return;warmed.add(u);const im=new Image();im.referrerPolicy='no-referrer';im.src=u}
+function warmPicture(ex,w){
+  if(isPhone()&&w){ ensurePhonePic(w,ex).then(img=>{if(img)warmURL(img.thumb)}); return; }
+  if(ex&&ex.img) warmURL(bigURL(ex.img.thumb));
+}
+function warmURL(u){if(!u||warmed.has(u))return;warmed.add(u);const im=new Image();im.referrerPolicy='no-referrer';im.src=u}
 /* The picture: emoji drawn by the computer's own font are shown at once and work without internet;
    a real illustration from Wikimedia replaces them when it loads (if the network lets it through). */
-const imgTag=im=>`<img id="illusImg" alt="" referrerpolicy="no-referrer" src="${esc(im.thumb)}">`;
+// pictures saved earlier are 640 px wide: on a computer ask Wikimedia for 960 px, and fall back if there is none that large
+const bigURL=u=>!isPhone()&&/\/640px-/.test(u)?u.replace('/640px-','/960px-'):u;
+const imgTag=im=>`<img id="illusImg" alt="" referrerpolicy="no-referrer" src="${esc(bigURL(im.thumb))}" data-fallback="${esc(im.thumb)}">`;
+const picOf=ex=>ex?(isPhone()?ex.imgM:ex.img):null;
+/* phone picture: searched once per word and saved with the example */
+const phoneSearch=new Map();
+function ensurePhonePic(w,ex){
+  if(!ex||ex.imgM) return Promise.resolve(ex&&ex.imgM||null);
+  if(!phoneSearch.has(w.k)){
+    const q=ex.q||IMGQ[w.en]||lemma(w.en.split(' ').pop())||w.en;
+    phoneSearch.set(w.k,findPicture(q,true).then(img=>{
+      if(img){ ex.imgM=img; const o=words.find(x=>x.k===w.k);
+        if(o&&o.ex&&o.ex.v===EX_V&&o.ex.en===ex.en){o.ex={...o.ex,imgM:img};B.saveEx(me,w.k,o.ex).catch(()=>{})} }
+      return img;
+    }).catch(()=>null));
+  }
+  return phoneSearch.get(w.k);
+}
 const creditOf=im=>im?[im.title,im.by,im.lic,im.src].filter(Boolean).join(' · '):'';
 function figureHTML(ex,emo){
-  const im=ex.img; if(!im&&!emo) return '';
+  const im=picOf(ex); if(!im&&!emo) return '';
   return `<figure class="illus" id="illus" title="${esc(creditOf(im))}">${emo?`<div class="emo" id="illusEmo" aria-hidden="true">${esc(emo)}</div>`:''}${im?imgTag(im):''}</figure>`;
 }
 function bindPicture(){
   const img=$('illusImg'), fig=$('illus'), em=$('illusEmo'); if(!img) return;
   img.onload=()=>{img.classList.add('ready');if(em)em.hidden=true};
-  img.onerror=()=>{img.remove();if(!em)fig.hidden=true};
+  img.onerror=()=>{const fb=img.dataset.fallback;if(fb&&img.getAttribute('src')!==fb){img.src=fb;return}img.remove();if(!em)fig.hidden=true};
   setTimeout(()=>{if(img.isConnected&&!img.classList.contains('ready')&&em)img.remove()},10000);   // a blocked request may never answer
 }
 function exampleHTML(ex){
@@ -1758,6 +1785,7 @@ function showExample(ex,onDone){
   const box=$('exBox'); if(!box) return;
   if(!ex){box.innerHTML='';onDone&&onDone();return}
   box.innerHTML=exampleHTML(ex);
+  if(isPhone()&&!ex.imgM&&cur){ const w=cur; ensurePhonePic(w,ex).then(img=>{if(img&&phase==='result'&&cur&&cur.k===w.k&&$('exBox')===box)addPicture(img)}); }
   $('exBtn').onclick=()=>readExample(ex,null);
   bindPicture();
   clearTimeout(speakTimer); speakTimer=setTimeout(()=>{if(phase==='result')readExample(ex,onDone)},400);
@@ -1893,7 +1921,7 @@ function nextWord(){
   const sw=cur;
   speakTimer=setTimeout(()=>{if(phase==='ask'&&!rec)speak(sw.en,()=>{if(cur===sw&&!saidAt)saidAt=Date.now()},()=>{if(cur===sw&&!saidEnd)saidEnd=Date.now()})},SPEAK_DELAY);
   // get the example sentence and its picture ready while the learner is thinking
-  const w=cur; if(!needsExample(w)||exPending.size<2) ensureExample(w).then(ex=>{if(ex)warmPicture(ex)});
+  const w=cur; if(!needsExample(w)||exPending.size<2) ensureExample(w).then(ex=>{if(ex)warmPicture(ex,w)});
 }
 function setStatus(t,err){const s=$('status');if(s){s.textContent=t;s.classList.toggle('err',!!err)}}
 let listenTimer=null;
@@ -2001,11 +2029,12 @@ function process(answers,shown,idk){
   const go=ex=>{
     if(!here()) return;
     if(!shownEx){ if(ex&&ex.en) show(ex); return; }
-    if(ex&&ex.img&&!shownEx.img&&!$('illusImg')) addPicture(ex.img);
+    if(ex&&ex.img&&!isPhone()&&!shownEx.img&&!$('illusImg')) addPicture(ex.img);
+    if(ex&&ex.en&&isPhone()&&!$('illusImg')) ensurePhonePic(w,ex).then(img=>{if(img&&here()&&!$('illusImg'))addPicture(img)});
   };
   if(exEarly.has(w.k)) go(exEarly.get(w.k)); else exEarlyCb.set(w.k,go);
   // other words may be ahead in the queue: look for a picture to the phrase we already have right now
-  if(exm&&!exm.img){ const q=IMGQ[w.en]||(exm.src==='gen'?'':lemma(w.en.split(' ').pop()))||w.en;
+  if(exm&&!exm.img&&!isPhone()){ const q=IMGQ[w.en]||(exm.src==='gen'?'':lemma(w.en.split(' ').pop()))||w.en;
     findPicture(q).then(img=>{if(img)go({...exm,img})}).catch(()=>{}); }
   ensureExample(w).then(ex=>{ if(ex&&ex.en) go(ex); else show(exm); },()=>show(exm));
   setTimeout(()=>show(exm),6000);
